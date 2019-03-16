@@ -138,8 +138,7 @@ static const Assumptions::Flags minimalAssumptionsFlags =
 static const Assumptions eagerAssumptions =
     minimalAssumptions | Assumption::Arg0IsEager_ | Assumption::Arg1IsEager_ |
     Assumption::Arg2IsEager_ | Assumption::Arg3IsEager_;
-static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions,
-                                                            eagerAssumptions};
+static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions};
 
 RIR_INLINE bool Assumptions::isEager(size_t i) const {
     if (i < EagerAssumptions.size())
