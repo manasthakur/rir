@@ -6,6 +6,7 @@
 #include <array>
 #include <cstring>
 #include <iostream>
+#include <vector>
 
 namespace rir {
 
@@ -81,6 +82,12 @@ struct Assumptions {
         return Assumptions(other.flags | flags, missing);
     }
 
+    RIR_INLINE Assumptions operator|(const Assumption& other) const {
+        Assumptions res = Assumptions(*this);
+        res.add(other);
+        return res;
+    }
+
     RIR_INLINE bool operator<(const Assumptions& other) const {
         // Order by number of assumptions! Important for dispatching.
         if (missing != other.missing)
@@ -121,6 +128,18 @@ struct Assumptions {
     uint8_t unused = 0;
 };
 #pragma pack(pop)
+
+static const Assumptions minimalAssumptions =
+    Assumptions() | Assumption::CorrectOrderOfArguments |
+    Assumption::NotTooManyArguments;
+static const Assumptions::Flags minimalAssumptionsFlags =
+    Assumptions::Flags() | Assumption::CorrectOrderOfArguments |
+    Assumption::NotTooManyArguments;
+static const Assumptions eagerAssumptions =
+    minimalAssumptions | Assumption::Arg0IsEager_ | Assumption::Arg1IsEager_ |
+    Assumption::Arg2IsEager_ | Assumption::Arg3IsEager_;
+static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions,
+                                                            eagerAssumptions};
 
 RIR_INLINE bool Assumptions::isEager(size_t i) const {
     if (i < EagerAssumptions.size())

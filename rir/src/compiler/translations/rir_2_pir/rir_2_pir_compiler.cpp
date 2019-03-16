@@ -20,8 +20,6 @@ namespace pir {
 
 // Currently PIR optimized functions cannot handle too many arguments or
 // mis-ordered arguments. The caller needs to take care.
-constexpr Assumptions::Flags Rir2PirCompiler::minimalAssumptions;
-constexpr Assumptions Rir2PirCompiler::defaultAssumptions;
 
 Rir2PirCompiler::Rir2PirCompiler(Module* module, StreamLogger& logger)
     : RirCompiler(module), logger(logger) {
@@ -67,9 +65,8 @@ void Rir2PirCompiler::compileFunction(rir::Function* srcFunction,
 void Rir2PirCompiler::compileClosure(Closure* closure,
                                      const OptimizationContext& ctx,
                                      MaybeCls success, Maybe fail_) {
-
-    if (!ctx.assumptions.includes(minimalAssumptions)) {
-        for (const auto& a : minimalAssumptions) {
+    if (!ctx.assumptions.includes(minimalAssumptionsFlags)) {
+        for (const auto& a : minimalAssumptionsFlags) {
             if (!ctx.assumptions.includes(a)) {
                 std::stringstream as;
                 as << "Missing minimal assumption " << a;
@@ -178,14 +175,16 @@ std::chrono::time_point<std::chrono::high_resolution_clock> endTime;
 std::unique_ptr<CompilerPerf> PERF = std::unique_ptr<CompilerPerf>(
     MEASURE_COMPILER_PERF ? new CompilerPerf : nullptr);
 
-void Rir2PirCompiler::optimizeModule() {
+void Rir2PirCompiler::optimizeModule(ClosureVersion* target) {
     logger.flush();
     size_t passnr = 0;
     for (auto& translation : translations) {
         module->eachPirClosure([&](Closure* c) {
             c->eachVersion([&](ClosureVersion* v) {
                 auto& log = logger.get(v);
-                log.pirOptimizationsHeader(v, translation, passnr++);
+                if (v == target) {
+                    log.pirOptimizationsHeader(v, translation, passnr++);
+                }
 
                 if (MEASURE_COMPILER_PERF)
                     startTime = std::chrono::high_resolution_clock::now();
@@ -198,7 +197,9 @@ void Rir2PirCompiler::optimizeModule() {
                     PERF->addTime(translation->getName(), passDuration.count());
                 }
 
-                log.pirOptimizations(v, translation);
+                if (v == target) {
+                    log.pirOptimizations(v, translation);
+                }
 
 #ifdef ENABLE_SLOWASSERT
                 assert(Verify::apply(v));
@@ -211,7 +212,9 @@ void Rir2PirCompiler::optimizeModule() {
 
     module->eachPirClosure([&](Closure* c) {
         c->eachVersion([&](ClosureVersion* v) {
-            logger.get(v).pirOptimizationsFinished(v);
+            if (v == target) {
+                logger.get(v).pirOptimizationsFinished(v);
+            }
 #ifdef ENABLE_SLOWASSERT
             assert(Verify::apply(v, true));
 #else

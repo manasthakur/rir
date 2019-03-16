@@ -198,7 +198,7 @@ REXPORT SEXP pir_setDebugFlags(SEXP debugFlags) {
     return R_NilValue;
 }
 
-SEXP pirCompile(SEXP what, const Assumptions& assumptions,
+SEXP pirCompile(SEXP what, const std::vector<Assumptions>& assumptionsVec,
                 const std::string& name, pir::DebugOptions debug) {
 
     if (!isValidClosureSEXP(what)) {
@@ -216,26 +216,28 @@ SEXP pirCompile(SEXP what, const Assumptions& assumptions,
     pir::StreamLogger logger(debug);
     logger.title("Compiling " + name);
     pir::Rir2PirCompiler cmp(m, logger);
-    cmp.compileClosure(what, name, assumptions,
-                       [&](pir::ClosureVersion* c) {
-                           logger.flush();
-                           cmp.optimizeModule();
+    for (auto assumptions : assumptionsVec) {
+        cmp.compileClosure(what, name, assumptions,
+                           [&](pir::ClosureVersion* c) {
+                               logger.flush();
+                               cmp.optimizeModule(c);
 
-                           // compile back to rir
-                           pir::Pir2RirCompiler p2r(logger);
-                           auto fun = p2r.compile(c, dryRun);
+                               // compile back to rir
+                               pir::Pir2RirCompiler p2r(logger);
+                               auto fun = p2r.compile(c, dryRun);
 
-                           // Install
-                           if (dryRun)
-                               return;
+                               // Install
+                               if (dryRun)
+                                   return;
 
-                           Protect p(fun->container());
-                           DispatchTable::unpack(BODY(what))->insert(fun);
-                       },
-                       [&]() {
-                           if (debug.includes(pir::DebugFlag::ShowWarnings))
-                               std::cerr << "Compilation failed\n";
-                       });
+                               Protect p(fun->container());
+                               DispatchTable::unpack(BODY(what))->insert(fun);
+                           },
+                           [&]() {
+                               if (debug.includes(pir::DebugFlag::ShowWarnings))
+                                   std::cerr << "Compilation failed\n";
+                           });
+    }
 
     delete m;
     UNPROTECT(1);
@@ -277,8 +279,7 @@ REXPORT SEXP pir_compile(SEXP what, SEXP name, SEXP debugFlags,
             Rf_error("pir_compile - given unknown debug style");
         }
     }
-    return pirCompile(what, rir::pir::Rir2PirCompiler::defaultAssumptions, n,
-                      opts);
+    return pirCompile(what, rir::defaultAssumptions, n, opts);
 }
 
 REXPORT SEXP pir_tests() {
@@ -286,28 +287,26 @@ REXPORT SEXP pir_tests() {
     return R_NilValue;
 }
 
-SEXP rirOptDefaultOpts(SEXP closure, const Assumptions& assumptions,
-                       SEXP name) {
-    std::string n = "";
-    if (TYPEOF(name) == SYMSXP)
-        n = CHAR(PRINTNAME(name));
-    // PIR can only optimize closures, not expressions
-    if (isValidClosureSEXP(closure))
-        return pirCompile(closure, assumptions, n, PirDebug);
-    else
-        return closure;
+SEXP rirOptDefaultOpts1(SEXP closure, const Assumptions& assumptions,
+                        SEXP name) {
+    std::vector<Assumptions> assumptionsVec = {assumptions};
+    return rirOptDefaultOpts(closure, assumptionsVec, name, false);
 }
 
-SEXP rirOptDefaultOptsDryrun(SEXP closure, const Assumptions& assumptions,
-                             SEXP name) {
+SEXP rirOptDefaultOpts(SEXP closure,
+                       const std::vector<Assumptions>& assumptionsVec,
+                       SEXP name, bool dryRun) {
     std::string n = "";
     if (TYPEOF(name) == SYMSXP)
         n = CHAR(PRINTNAME(name));
     // PIR can only optimize closures, not expressions
-    if (isValidClosureSEXP(closure))
-        return pirCompile(closure, assumptions, n,
-                          PirDebug | pir::DebugFlag::DryRun);
-    else
+    if (isValidClosureSEXP(closure)) {
+        pir::DebugOptions opts = PirDebug;
+        if (dryRun) {
+            opts.flags.set(pir::DebugFlag::DryRun);
+        }
+        return pirCompile(closure, assumptionsVec, n, opts);
+    } else
         return closure;
 }
 

@@ -53,15 +53,15 @@ InterpreterInstance* context_create() {
     } else if (pir && std::string(pir).compare("force") == 0) {
         c->closureCompiler = [](SEXP f, SEXP n) {
             SEXP rir = rir_compile(f, R_NilValue);
-            return rirOptDefaultOpts(rir, Assumptions(), n);
+            return rirOptDefaultOpts(rir, defaultAssumptions, n, false);
         };
     } else if (pir && std::string(pir).compare("force_dryrun") == 0) {
         c->closureCompiler = [](SEXP f, SEXP n) {
             SEXP rir = rir_compile(f, R_NilValue);
-            return rirOptDefaultOptsDryrun(rir, Assumptions(), n);
+            return rirOptDefaultOpts(rir, defaultAssumptions, n, true);
         };
     } else {
-        c->closureOptimizer = rirOptDefaultOpts;
+        c->closureOptimizer = rirOptDefaultOpts1;
     }
 
     return c;

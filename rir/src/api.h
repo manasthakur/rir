@@ -15,10 +15,13 @@ REXPORT SEXP rir_eval(SEXP exp, SEXP env);
 REXPORT SEXP pir_compile(SEXP closure, SEXP name, SEXP debugFlags,
                          SEXP debugStyle);
 REXPORT SEXP rir_compile(SEXP what, SEXP env);
-SEXP pirCompile(SEXP closure, const rir::Assumptions& assumptions,
+SEXP pirCompile(SEXP closure,
+                const std::vector<rir::Assumptions>& assumptionsVec,
                 const std::string& name, const rir::pir::DebugOptions);
-extern SEXP rirOptDefaultOpts(SEXP closure, const rir::Assumptions&, SEXP name);
-extern SEXP rirOptDefaultOptsDryrun(SEXP closure, const rir::Assumptions&,
-                                    SEXP name);
+extern SEXP rirOptDefaultOpts1(SEXP closure, const rir::Assumptions&,
+                               SEXP name);
+extern SEXP rirOptDefaultOpts(SEXP closure,
+                              const std::vector<rir::Assumptions>&, SEXP name,
+                              bool dryRun);
 
 #endif // API_H_

@@ -694,23 +694,20 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
         // exactly for this number of arguments, thus we need to add this as an
         // explicit assumption.
         given.add(Assumption::NotTooFewArguments);
-        if (fun == table->baseline() || given != fun->signature().assumptions) {
-            if (Assumptions(given).includes(
-                    pir::Rir2PirCompiler::minimalAssumptions)) {
-                // More assumptions are available than this version uses. Let's
-                // try compile a better matching version.
+        if (fun == table->baseline() || given < fun->signature().assumptions) {
+            // More assumptions are available than this version uses. Let's
+            // try compile a better matching version.
 #ifdef DEBUG_DISPATCH
-                std::cout << "Optimizing for new context:";
-                std::cout << given << " vs " << fun->signature().assumptions
-                          << "\n";
+            std::cout << "Optimizing for new context:";
+            std::cout << given << " vs " << fun->signature().assumptions
+                      << "\n";
 #endif
-                SEXP lhs = CAR(call.ast);
-                SEXP name = R_NilValue;
-                if (TYPEOF(lhs) == SYMSXP)
-                    name = lhs;
-                ctx->closureOptimizer(call.callee, given, name);
-                fun = dispatch(call, table);
-            }
+            SEXP lhs = CAR(call.ast);
+            SEXP name = R_NilValue;
+            if (TYPEOF(lhs) == SYMSXP)
+                name = lhs;
+            ctx->closureOptimizer(call.callee, given, name);
+            fun = dispatch(call, table);
         }
     }
 
