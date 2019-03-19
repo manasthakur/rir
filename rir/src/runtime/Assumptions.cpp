@@ -16,9 +16,6 @@ std::ostream& operator<<(std::ostream& out, Assumption a) {
     case Assumption::Arg3IsEager_:
         out << "Eager3";
         break;
-    case Assumption::Arg4IsEager_:
-        out << "Eager4";
-        break;
     case Assumption::Arg0IsEager_:
         out << "Eager0";
         break;
@@ -58,7 +55,7 @@ std::ostream& operator<<(std::ostream& out, const Assumptions& a) {
     return out;
 }
 
-constexpr std::array<Assumption, 5> Assumptions::ObjAssumptions;
+constexpr std::array<Assumption, 4> Assumptions::ObjAssumptions;
 constexpr std::array<Assumption, 4> Assumptions::EagerAssumptions;
 
 } // namespace rir

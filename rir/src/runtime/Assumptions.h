@@ -16,7 +16,6 @@ enum class Assumption {
     Arg1IsEager_,
     Arg2IsEager_,
     Arg3IsEager_,
-    Arg4IsEager_,
 
     // Arg is not an object
     Arg0IsNonObj_,
@@ -114,13 +113,12 @@ struct Assumptions {
     friend struct std::hash<rir::Assumptions>;
     friend std::ostream& operator<<(std::ostream& out, const Assumptions& a);
 
-    static constexpr std::array<Assumption, 5> ObjAssumptions = {
+    static constexpr std::array<Assumption, 4> ObjAssumptions = {
         {Assumption::Arg0IsNonObj_, Assumption::Arg1IsNonObj_,
-         Assumption::Arg2IsNonObj_, Assumption::Arg3IsEager_,
-         Assumption::Arg4IsEager_}};
+         Assumption::Arg2IsNonObj_, Assumption::Arg3IsNonObj_}};
     static constexpr std::array<Assumption, 4> EagerAssumptions = {
         {Assumption::Arg0IsEager_, Assumption::Arg1IsEager_,
-         Assumption::Arg2IsEager_, Assumption::Arg3IsNonObj_}};
+         Assumption::Arg2IsEager_, Assumption::Arg3IsEager_}};
 
   private:
     Flags flags;
@@ -135,10 +133,11 @@ static const Assumptions minimalAssumptions =
 static const Assumptions::Flags minimalAssumptionsFlags =
     Assumptions::Flags() | Assumption::CorrectOrderOfArguments |
     Assumption::NotTooManyArguments;
-static const Assumptions eagerAssumptions =
-    minimalAssumptions | Assumption::Arg0IsEager_ | Assumption::Arg1IsEager_ |
-    Assumption::Arg2IsEager_ | Assumption::Arg3IsEager_;
-static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions};
+static const Assumptions arg0Assumptions =
+    minimalAssumptions | Assumption::Arg0IsEager_ | Assumption::Arg0IsNonObj_ |
+    Assumption::NoExplicitlyMissingArgs | Assumption::NotTooFewArguments;
+static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions,
+                                                            arg0Assumptions};
 
 RIR_INLINE bool Assumptions::isEager(size_t i) const {
     if (i < EagerAssumptions.size())
