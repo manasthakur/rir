@@ -127,17 +127,15 @@ struct Assumptions {
 };
 #pragma pack(pop)
 
-static const Assumptions minimalAssumptions =
-    Assumptions() | Assumption::CorrectOrderOfArguments |
-    Assumption::NotTooManyArguments;
 static const Assumptions::Flags minimalAssumptionsFlags =
     Assumptions::Flags() | Assumption::CorrectOrderOfArguments |
     Assumption::NotTooManyArguments;
+static const Assumptions minimalAssumptions =
+    Assumptions(minimalAssumptionsFlags, 0);
 static const Assumptions arg0Assumptions =
     minimalAssumptions | Assumption::Arg0IsEager_ | Assumption::Arg0IsNonObj_ |
     Assumption::NoExplicitlyMissingArgs | Assumption::NotTooFewArguments;
-static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions,
-                                                            arg0Assumptions};
+static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions};
 
 RIR_INLINE bool Assumptions::isEager(size_t i) const {
     if (i < EagerAssumptions.size())
