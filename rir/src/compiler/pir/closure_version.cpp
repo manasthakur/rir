@@ -10,30 +10,66 @@ namespace rir {
 namespace pir {
 
 void ClosureVersion::print(std::ostream& out, bool tty) const {
-    out << *this << "\n";
-    printCode(out, tty);
-    for (auto p : promises_) {
-        if (p)
-            p->print(out, tty);
+    print(DebugStyle::Standard, out, tty, false);
+}
+
+void ClosureVersion::print(DebugStyle style, std::ostream& out, bool tty,
+                           bool omitDeoptBranches) const {
+    switch (style) {
+    case DebugStyle::Standard:
+        printStandard(out, tty, omitDeoptBranches);
+        break;
+    case DebugStyle::GraphViz:
+        printGraph(out, omitDeoptBranches);
+        break;
+    case DebugStyle::GraphVizBB:
+        printBBGraph(out, omitDeoptBranches);
+        break;
+    default:
+        assert(false);
     }
 }
 
-void ClosureVersion::printGraph(std::ostream& out, bool tty) const {
+void ClosureVersion::printStandard(std::ostream& out, bool tty,
+                                   bool omitDeoptBranches) const {
     out << *this << "\n";
-    printGraphCode(out, tty);
+    printCode(out, tty, omitDeoptBranches);
     for (auto p : promises_) {
         if (p)
-            p->print(out, tty);
+            p->printCode(out, tty, omitDeoptBranches);
     }
 }
 
-void ClosureVersion::printBBGraph(std::ostream& out, bool tty) const {
-    out << *this << "\n";
-    printBBGraphCode(out);
+void ClosureVersion::printGraph(std::ostream& out,
+                                bool omitDeoptBranches) const {
+    out << "digraph {\n";
+    out << "label=\"" << *this << "\";\n";
+    printGraphCode(out, omitDeoptBranches);
     for (auto p : promises_) {
-        if (p)
-            p->print(out, tty);
+        if (p) {
+            out << "subgraph p" << p->id << "{\n";
+            out << "label = \"Promise " << p->id << "\";\n";
+            p->printGraphCode(out, omitDeoptBranches);
+            out << "}\n";
+        }
     }
+    out << "}\n";
+}
+
+void ClosureVersion::printBBGraph(std::ostream& out,
+                                  bool omitDeoptBranches) const {
+    out << "digraph {\n";
+    out << "label=\"" << *this << "\";\n";
+    printBBGraphCode(out, omitDeoptBranches);
+    for (auto p : promises_) {
+        if (p) {
+            out << "subgraph {\n";
+            out << "label=\"Promise " << p->id << "\";\n";
+            p->printBBGraphCode(out, omitDeoptBranches);
+            out << "}\n";
+        }
+    }
+    out << "}\n";
 }
 
 Promise* ClosureVersion::createProm(unsigned srcPoolIdx) {
@@ -43,8 +79,10 @@ Promise* ClosureVersion::createProm(unsigned srcPoolIdx) {
 }
 
 ClosureVersion::~ClosureVersion() {
-    for (auto p : promises_)
-        delete p;
+    for (auto p : promises_) {
+        if (p)
+            delete p;
+    }
 }
 
 ClosureVersion* ClosureVersion::clone(const Assumptions& newAssumptions) {

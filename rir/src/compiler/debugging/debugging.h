@@ -27,6 +27,7 @@ namespace pir {
     V(DryRun)                                                                  \
     V(PrintIntoFiles)                                                          \
     V(PrintIntoStdout)                                                         \
+    V(OmitDeoptBranches)                                                       \
     LIST_OF_PIR_PRINT_DEBUGGING_FLAGS(V)
 
 #define LIST_OF_DEBUG_STYLES(V)                                                \
@@ -67,7 +68,8 @@ struct DebugOptions {
     }
 
     explicit DebugOptions(unsigned long long flags)
-        : flags(flags), style(DebugStyle::Standard) {}
+        : flags(flags), passFilter(".*"), functionFilter(".*"),
+          style(DebugStyle::Standard) {}
     DebugOptions(const DebugFlags& flags, const std::regex& filter,
                  const std::regex& functionFilter, DebugStyle style)
         : flags(flags), passFilter(filter), functionFilter(functionFilter),
