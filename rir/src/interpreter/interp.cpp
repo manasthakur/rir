@@ -683,6 +683,7 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
 
     addDynamicAssumptionsFromContext(call);
     Function* fun = dispatch(call, table);
+    fun->registerInvocation();
 
     if (!fun->unoptimizable && fun->invocationCount() % PIR_WARMUP == 0) {
         Assumptions given =
@@ -712,7 +713,6 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
         }
     }
 
-    fun->registerInvocation();
     bool needsEnv = fun->signature().envCreation ==
                     FunctionSignature::Environment::CallerProvided;
     SEXP result = nullptr;

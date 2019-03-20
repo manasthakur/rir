@@ -61,7 +61,9 @@ InterpreterInstance* context_create() {
             return rirOptDefaultOpts(rir, defaultAssumptions, n, true);
         };
     } else {
-        c->closureOptimizer = rirOptDefaultOpts1;
+        c->closureOptimizer = [](SEXP f, const Assumptions& a, SEXP n) {
+            return rirOptDefaultOpts(f, {a}, n, false);
+        };
     }
 
     return c;

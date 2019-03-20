@@ -287,12 +287,6 @@ REXPORT SEXP pir_tests() {
     return R_NilValue;
 }
 
-SEXP rirOptDefaultOpts1(SEXP closure, const Assumptions& assumptions,
-                        SEXP name) {
-    std::vector<Assumptions> assumptionsVec = {assumptions};
-    return rirOptDefaultOpts(closure, assumptionsVec, name, false);
-}
-
 SEXP rirOptDefaultOpts(SEXP closure,
                        const std::vector<Assumptions>& assumptionsVec,
                        SEXP name, bool dryRun) {
