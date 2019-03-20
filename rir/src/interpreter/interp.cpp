@@ -693,7 +693,9 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
         // exactly for this number of arguments, thus we need to add this as an
         // explicit assumption.
         given.add(Assumption::NotTooFewArguments);
-        if (fun == table->baseline() || given < fun->signature().assumptions) {
+        if ((fun == table->baseline() ||
+             given != fun->signature().assumptions) &&
+            given.includes(pir::Rir2PirCompiler::minimalAssumptions)) {
             // More assumptions are available than this version uses. Let's
             // try compile a better matching version.
 #ifdef DEBUG_DISPATCH
