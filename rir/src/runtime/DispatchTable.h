@@ -6,8 +6,6 @@
 
 namespace rir {
 
-#define DEBUG_DISPATCH 1
-
 #define DISPATCH_TABLE_MAGIC (unsigned)0xd7ab1e00
 
 typedef SEXP DispatchTableEntry;
