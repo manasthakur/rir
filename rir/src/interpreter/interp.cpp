@@ -695,7 +695,7 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
         given.add(Assumption::NotTooFewArguments);
         if ((fun == table->baseline() ||
              given != fun->signature().assumptions) &&
-            given.includes(pir::Rir2PirCompiler::minimalAssumptions)) {
+            given.includes(minimalAssumptionsFlags)) {
             // More assumptions are available than this version uses. Let's
             // try compile a better matching version.
 #ifdef DEBUG_DISPATCH
@@ -708,8 +708,6 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
             if (TYPEOF(lhs) == SYMSXP)
                 name = lhs;
             ctx->closureOptimizer(call.callee, given, name);
-            body = BODY(call.callee);
-            table = DispatchTable::unpack(body);
             fun = dispatch(call, table);
         }
     }
