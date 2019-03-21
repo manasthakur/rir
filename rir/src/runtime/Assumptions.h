@@ -135,8 +135,7 @@ static const Assumptions minimalAssumptions =
 static const Assumptions arg0Assumptions =
     minimalAssumptions | Assumption::Arg0IsEager_ | Assumption::Arg0IsNonObj_ |
     Assumption::NoExplicitlyMissingArgs | Assumption::NotTooFewArguments;
-static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions,
-                                                            arg0Assumptions};
+static const std::vector<Assumptions> defaultAssumptions = {minimalAssumptions};
 
 RIR_INLINE bool Assumptions::isEager(size_t i) const {
     if (i < EagerAssumptions.size())
