@@ -77,7 +77,7 @@ g <- rir.compile(function() {
   f(1,2,3)
 })
 
-stopifnot(g()==1)
+stopifnot(tryCatch({g(); FALSE},error=function(e) TRUE))
 pir.compile(g)
 stopifnot(g()==1)
 

@@ -99,9 +99,7 @@ struct Assumptions {
     }
 
     RIR_INLINE bool subtype(const Assumptions& other) const {
-        if (other.flags.includes(Assumption::NotTooFewArguments))
-            return missing == other.missing && other.flags.includes(flags);
-        return other.flags.includes(flags);
+        return missing == other.missing && other.flags.includes(flags);
     }
 
     friend struct std::hash<rir::Assumptions>;
