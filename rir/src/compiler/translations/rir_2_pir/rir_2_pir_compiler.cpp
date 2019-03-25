@@ -151,10 +151,9 @@ void Rir2PirCompiler::compileClosure(Closure* closure,
 
     if (rir2pir.tryCompile(builder)) {
         log.compilationEarlyPir(version);
-        if (Verify::apply(version)) {
-            log.flush();
-            return success(version);
-        }
+        Verify::apply(version);
+        log.flush();
+        return success(version);
 
         log.failed("rir2pir failed to verify");
         log.flush();
@@ -202,7 +201,7 @@ void Rir2PirCompiler::optimizeModule(ClosureVersion* target) {
                 }
 
 #ifdef ENABLE_SLOWASSERT
-                assert(Verify::apply(v));
+                Verify::apply(v);
 #endif
             });
         });
@@ -216,9 +215,11 @@ void Rir2PirCompiler::optimizeModule(ClosureVersion* target) {
                 logger.get(v).pirOptimizationsFinished(v);
             }
 #ifdef ENABLE_SLOWASSERT
-            assert(Verify::apply(v, true));
+            Verify::apply(v, true);
 #else
-            assert(Verify::apply(v));
+#ifndef NDEBUG
+            Verify::apply(v);
+#endif
 #endif
         });
     });

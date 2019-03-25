@@ -17,7 +17,7 @@ REXPORT SEXP pir_compile(SEXP closure, SEXP name, SEXP debugFlags,
 REXPORT SEXP rir_compile(SEXP what, SEXP env);
 SEXP pirCompile(SEXP closure,
                 const std::vector<rir::Assumptions>& assumptionsVec,
-                const std::string& name, const rir::pir::DebugOptions);
+                const std::string& name, const rir::pir::DebugOptions&);
 extern SEXP rirOptDefaultOpts(SEXP closure,
                               const std::vector<rir::Assumptions>& assumptions,
                               SEXP name, bool dryRun);

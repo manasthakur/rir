@@ -239,7 +239,7 @@ class Instruction : public Value {
     bool usesDoNotInclude(BB*, std::unordered_set<Tag>);
     bool unused();
 
-    virtual void updateType() {};
+    virtual void updateType(){};
 
     virtual void printEnv(std::ostream& out, bool tty) const;
     virtual void printArgs(std::ostream& out, bool tty) const;
@@ -299,6 +299,7 @@ class Instruction : public Value {
     virtual Value* env() const {
         assert(!mayHaveEnv() && "subclass must override env() if it uses env");
         assert(false && "this instruction has no env");
+        return nullptr;
     }
     virtual void env(Value* env) {
         assert(!mayHaveEnv() && "subclass must override env() if it uses env");
@@ -309,6 +310,7 @@ class Instruction : public Value {
         assert(!mayHaveEnv() &&
                "subclass must override envSlot() if it uses env");
         assert(false && "this instruction has no env");
+        return -1;
     }
 };
 
@@ -962,13 +964,6 @@ class FLI(Is, 1, Effects::None()) {
 class FLI(LdFunctionEnv, 0, Effects::None()) {
   public:
     LdFunctionEnv() : FixedLenInstruction(RType::env) {}
-};
-
-class FLI(EnsureNamed, 1, Effects::None()) {
-  public:
-    explicit EnsureNamed(Value* v)
-        : FixedLenInstruction(v->type, {{v->type}}, {{v}}) {}
-    void updateType() override final { type = arg<0>().val()->type; }
 };
 
 class FLI(SetShared, 1, Effects::None()) {

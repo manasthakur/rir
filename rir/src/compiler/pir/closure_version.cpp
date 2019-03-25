@@ -35,8 +35,10 @@ void ClosureVersion::printStandard(std::ostream& out, bool tty,
     out << *this << "\n";
     printCode(out, tty, omitDeoptBranches);
     for (auto p : promises_) {
-        if (p)
+        if (p) {
+            out << "Prom " << p->id << ":\n";
             p->printCode(out, tty, omitDeoptBranches);
+        }
     }
 }
 
@@ -95,12 +97,11 @@ ClosureVersion* ClosureVersion::clone(const Assumptions& newAssumptions) {
 }
 
 void ClosureVersion::erasePromise(unsigned id) {
-    auto p = promises_.at(id);
-    assert(p && "Promise already deleted");
+    assert(promises_.at(id) && "Promise already deleted");
 
     // If we delete a corrupt promise it get's hard to debug...
-    assert(p->owner == this);
-    assert(promise(p->id) == p);
+    assert(promises_.at(id)->owner == this);
+    assert(promise(promises_.at(id)->id) == promises_.at(id));
 
     delete promises_[id];
     promises_[id] = nullptr;

@@ -51,7 +51,7 @@ typedef std::unordered_map<std::string, pir::ClosureVersion*> closuresByName;
 closuresByName compileRir2Pir(SEXP env, pir::Module* m) {
     pir::StreamLogger logger({pir::DebugOptions::DebugFlags() |
                                   // pir::DebugFlag::PrintIntoStdout |
-                                  // pir::DebugFlag::PrintEarlyRir |
+                                  // pir::DebugFlag::PrintEarlyPir |
                                   // pir::DebugFlag::PrintOptimizationPasses |
                                   pir::DebugFlag::PrintFinalPir,
                               std::regex(".*"), std::regex(".*"),
@@ -131,16 +131,11 @@ class NullBuffer : public std::ostream, std::streambuf {
 };
 
 bool verify(Module* m) {
-    bool success = true;
-    m->eachPirClosureVersion([&success](ClosureVersion* v) {
-        if (!Verify::apply(v))
-            success = false;
-    });
+    m->eachPirClosureVersion([](ClosureVersion* v) { Verify::apply(v); });
     // TODO: find fix for osx
     NullBuffer nb;
     m->print(nb);
     // m->print(std::cout);
-
     return true;
 }
 
