@@ -72,11 +72,8 @@ struct CallContext {
     bool hasNames() const { return names; }
 
     Immediate implicitArgIdx(unsigned i) const {
-        assert(implicitArgs);
-        if (i < passedArgs)
-            return implicitArgs[i];
-        else
-            return MISSING_ARG_IDX;
+        assert(implicitArgs && i < passedArgs);
+        return implicitArgs[i];
     }
 
     bool missingArg(unsigned i) const {
