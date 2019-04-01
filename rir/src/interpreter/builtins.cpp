@@ -115,6 +115,7 @@ R_bcstack_t tryFastSpecialCall(const CallContext& call,
 R_bcstack_t tryFastBuiltinCall(const CallContext& call,
                                InterpreterInstance* ctx) {
     SLOWASSERT(call.hasStackArgs() && !call.hasNames());
+    return nullStackObj;
 
     static constexpr size_t MAXARGS = 16;
     std::array<R_bcstack_t, MAXARGS> args;
