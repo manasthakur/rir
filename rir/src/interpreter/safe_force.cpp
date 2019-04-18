@@ -10,9 +10,15 @@ namespace rir {
 
 SEXP safeEval(SEXP e, SEXP rho) {
     SEXPTYPE t = TYPEOF(e);
-    if (t == LANGSXP || t == SYMSXP || t == PROMSXP || t == BCODESXP ||
-        t == EXTERNALSXP) {
+    if (t == LANGSXP || t == PROMSXP || t == BCODESXP || t == EXTERNALSXP) {
         return R_UnboundValue;
+    } else if (t == SYMSXP) {
+        if (rho == nullptr)
+            return R_UnboundValue;
+        std::cout << "Safe forcing " << CHAR(PRINTNAME(e)) << " into: ";
+        SEXP f = Rf_findVar(e, rho);
+        Rf_PrintValue(f);
+        return safeEval(f, rho);
     } else {
         // Constant
         return e;
