@@ -8,19 +8,44 @@
 
 namespace rir {
 
+// #define DEBUG_SAFE_EVAL
+
 SEXP safeEval(SEXP e, SEXP rho) {
     SEXPTYPE t = TYPEOF(e);
-    if (t == LANGSXP || t == PROMSXP || t == BCODESXP || t == EXTERNALSXP) {
+    if (t == LANGSXP || t == BCODESXP || t == EXTERNALSXP) {
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << "safe eval failed: ";
+        Rf_PrintValue(e);
+#endif
         return R_UnboundValue;
+    } else if (t == PROMSXP) {
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << "safe eval promise -> ";
+#endif
+        return safeForcePromise(e);
     } else if (t == SYMSXP) {
         if (rho == nullptr)
             return R_UnboundValue;
-        std::cout << "Safe forcing " << CHAR(PRINTNAME(e)) << " into: ";
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << "safe eval lookup " << CHAR(PRINTNAME(e));
+#endif
         SEXP f = Rf_findVar(e, rho);
-        Rf_PrintValue(f);
+        if (f == R_UnboundValue) {
+#ifdef DEBUG_SAFE_EVAL
+            std::cout << " failed\n";
+#endif
+            return R_UnboundValue;
+        }
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << " -> ";
+#endif
         return safeEval(f, rho);
     } else {
         // Constant
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << "safe eval constant: ";
+        Rf_PrintValue(e);
+#endif
         return e;
     }
 }

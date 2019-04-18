@@ -3,11 +3,12 @@
 #include "BC.h"
 #include "CodeStream.h"
 
-#include "R/r.h"
+#include "../interpreter/safe_force.h"
+#include "R/Funtab.h"
 #include "R/RList.h"
 #include "R/Sexp.h"
 #include "R/Symbols.h"
-#include "R/Funtab.h"
+#include "R/r.h"
 
 #include "../interpreter/safe_force.h"
 #include "utils/Pool.h"
@@ -988,10 +989,12 @@ void compileCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args, bool voidC
             continue;
         }
 
-        // (1) Arguments are wrapped as Promises:
-        //     create a new Code object for the promise
+        // (1) Arguments are wrapped as Promises, with potential eager versions:
+        //     create a new Code object for the promise,
+        //     and "safe force" if the argument is constant
         Code* prom = compilePromise(ctx, *arg);
-        size_t idx = cs.addPromise(prom);
+        SEXP eager = *arg;
+        size_t idx = cs.addPromise(prom, eager);
         callArgs.push_back(idx);
 
         // (2) remember if the argument had a name associated

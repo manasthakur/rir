@@ -556,46 +556,48 @@ static void addDynamicAssumptionsFromContext(CallContext& call) {
         given.add(Assumption::CorrectOrderOfArguments);
 
     given.add(Assumption::NoExplicitlyMissingArgs);
-    if (call.hasStackArgs()) {
-        // Always true in this case, since we will pad missing args on the stack
-        // later with R_MissingArg's
-        given.add(Assumption::NotTooFewArguments);
-
-        auto testArg = [&](size_t i) {
-            SEXP arg = call.stackArg(i);
-            bool notObj = true;
-            bool isEager = true;
-            if (TYPEOF(arg) == PROMSXP) {
-                arg = PRVALUE(arg);
-                if (arg == R_UnboundValue) {
-                    notObj = false;
-                    isEager = false;
-                }
-            } else if (arg == R_MissingArg) {
-                given.remove(Assumption::NoExplicitlyMissingArgs);
-                isEager = false;
-            }
-            if (isObject(arg)) {
-                notObj = false;
-            }
-            if (isEager)
-                given.setEager(i);
-            if (notObj)
-                given.setNotObj(i);
-            if (isEager && notObj && IS_SIMPLE_SCALAR(arg, REALSXP))
-                given.setSimpleReal(i);
-            if (isEager && notObj && IS_SIMPLE_SCALAR(arg, INTSXP))
-                given.setSimpleInt(i);
-        };
-
-        for (size_t i = 0; i < call.suppliedArgs; ++i) {
-            testArg(i);
-        }
-    } else {
+    if (!call.hasStackArgs()) {
         for (size_t i = 0; i < call.suppliedArgs; ++i) {
             if (call.missingArg(i))
                 given.remove(Assumption::NoExplicitlyMissingArgs);
         }
+    }
+
+    // Always true in this case, since we will pad missing args on the stack
+    // later with R_MissingArg's
+    given.add(Assumption::NotTooFewArguments);
+
+    for (size_t i = 0; i < call.suppliedArgs; ++i) {
+        SEXP arg = call.argSexp(i);
+        bool notObj = true;
+        bool isEager = true;
+        if (!call.hasStackArgs()) {
+            arg = safeEval(arg, call.callerEnv);
+            if (arg == R_UnboundValue) {
+                notObj = false;
+                isEager = false;
+            }
+        } else if (TYPEOF(arg) == PROMSXP) {
+            arg = PRVALUE(arg);
+            if (arg == R_UnboundValue) {
+                notObj = false;
+                isEager = false;
+            }
+        } else if (arg == R_MissingArg) {
+            given.remove(Assumption::NoExplicitlyMissingArgs);
+            isEager = false;
+        }
+        if (isObject(arg)) {
+            notObj = false;
+        }
+        if (isEager)
+            given.setEager(i);
+        if (notObj)
+            given.setNotObj(i);
+        if (isEager && notObj && IS_SIMPLE_SCALAR(arg, REALSXP))
+            given.setSimpleReal(i);
+        if (isEager && notObj && IS_SIMPLE_SCALAR(arg, INTSXP))
+            given.setSimpleInt(i);
     }
 }
 
