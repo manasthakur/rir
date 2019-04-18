@@ -577,6 +577,7 @@ static void addDynamicAssumptionsFromContext(CallContext& call) {
                 notObj = false;
                 isEager = false;
             }
+            // callImplicit already handles missing
         } else if (TYPEOF(arg) == PROMSXP) {
             arg = PRVALUE(arg);
             if (arg == R_UnboundValue) {

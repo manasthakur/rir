@@ -11,6 +11,17 @@ namespace rir {
 // #define DEBUG_SAFE_EVAL
 
 SEXP safeEval(SEXP e, SEXP rho) {
+    if (e == R_UnboundValue) {
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << "safe eval failed on unbound\n";
+#endif
+        return R_UnboundValue;
+    } else if (e == R_MissingArg) {
+#ifdef DEBUG_SAFE_EVAL
+        std::cout << "safe eval missing\n";
+#endif
+        return e;
+    }
     SEXPTYPE t = TYPEOF(e);
     if (t == LANGSXP || t == BCODESXP || t == EXTERNALSXP) {
 #ifdef DEBUG_SAFE_EVAL
