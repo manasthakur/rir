@@ -1,6 +1,7 @@
 #ifndef RIR_INTERPRETER_DATA_C_H
 #define RIR_INTERPRETER_DATA_C_H
 
+#include "../compiler/parameter.h"
 #include "../config.h"
 #include <assert.h>
 #include <stdint.h>
@@ -21,11 +22,12 @@ struct CallContext {
     CallContext(Code* c, SEXP callee, size_t nargs, SEXP ast,
                 R_bcstack_t* stackArgs, Immediate* implicitArgs,
                 Immediate* names, SEXP callerEnv,
-                const Assumptions& givenAssumptions, InterpreterInstance* ctx)
+                const Assumptions& givenAssumptions, size_t* sfCounter,
+                InterpreterInstance* ctx)
         : caller(c), suppliedArgs(nargs), passedArgs(nargs),
           stackArgs(stackArgs), implicitArgs(implicitArgs), names(names),
           callerEnv(callerEnv), ast(ast), callee(callee),
-          givenAssumptions(givenAssumptions) {
+          givenAssumptions(givenAssumptions), sfCounter(sfCounter) {
         assert(callee &&
                (TYPEOF(callee) == CLOSXP || TYPEOF(callee) == SPECIALSXP ||
                 TYPEOF(callee) == BUILTINSXP));
@@ -33,28 +35,33 @@ struct CallContext {
 
     CallContext(Code* c, SEXP callee, size_t nargs, Immediate ast,
                 Immediate* implicitArgs, Immediate* names, SEXP callerEnv,
-                const Assumptions& givenAssumptions, InterpreterInstance* ctx)
+                const Assumptions& givenAssumptions, size_t* sfCounter,
+                InterpreterInstance* ctx)
         : CallContext(c, callee, nargs, cp_pool_at(ctx, ast), nullptr,
-                      implicitArgs, names, callerEnv, givenAssumptions, ctx) {}
+                      implicitArgs, names, callerEnv, givenAssumptions,
+                      sfCounter, ctx) {}
 
     CallContext(Code* c, SEXP callee, size_t nargs, Immediate ast,
                 R_bcstack_t* stackArgs, Immediate* names, SEXP callerEnv,
                 const Assumptions& givenAssumptions, InterpreterInstance* ctx)
         : CallContext(c, callee, nargs, cp_pool_at(ctx, ast), stackArgs,
-                      nullptr, names, callerEnv, givenAssumptions, ctx) {}
+                      nullptr, names, callerEnv, givenAssumptions, nullptr,
+                      ctx) {}
 
     CallContext(Code* c, SEXP callee, size_t nargs, Immediate ast,
                 Immediate* implicitArgs, SEXP callerEnv,
-                const Assumptions& givenAssumptions, InterpreterInstance* ctx)
+                const Assumptions& givenAssumptions, size_t* sfCounter,
+                InterpreterInstance* ctx)
         : CallContext(c, callee, nargs, cp_pool_at(ctx, ast), nullptr,
-                      implicitArgs, nullptr, callerEnv, givenAssumptions, ctx) {
-    }
+                      implicitArgs, nullptr, callerEnv, givenAssumptions,
+                      sfCounter, ctx) {}
 
     CallContext(Code* c, SEXP callee, size_t nargs, Immediate ast,
                 R_bcstack_t* stackArgs, SEXP callerEnv,
                 const Assumptions& givenAssumptions, InterpreterInstance* ctx)
         : CallContext(c, callee, nargs, cp_pool_at(ctx, ast), stackArgs,
-                      nullptr, nullptr, callerEnv, givenAssumptions, ctx) {}
+                      nullptr, nullptr, callerEnv, givenAssumptions, nullptr,
+                      ctx) {}
 
     const Code* caller;
     const size_t suppliedArgs;
@@ -66,6 +73,7 @@ struct CallContext {
     const SEXP ast;
     const SEXP callee;
     Assumptions givenAssumptions;
+    size_t* sfCounter;
     SEXP arglist = nullptr;
 
     bool hasStackArgs() const { return stackArgs != nullptr; }
@@ -117,15 +125,9 @@ struct CallContext {
         return cp_pool_at(ctx, names[i]);
     }
 
-    void safeForceArgs() const {
-        assert(hasStackArgs());
-        for (unsigned i = 0; i < passedArgs; i++) {
-            SEXP arg = stackArg(i);
-            if (TYPEOF(arg) == PROMSXP) {
-                safeForcePromise(arg);
-            }
-        }
-    }
+    bool shouldSafeForce();
+
+    void incSafeForceCounter();
 };
 
 } // namespace rir

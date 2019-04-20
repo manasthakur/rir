@@ -572,12 +572,16 @@ static void addDynamicAssumptionsFromContext(CallContext& call) {
         bool notObj = true;
         bool isEager = true;
         if (!call.hasStackArgs()) {
-            arg = safeEval(arg, call.callerEnv);
-            if (arg == R_UnboundValue) {
-                notObj = false;
-                isEager = false;
+            if (call.shouldSafeForce()) {
+                arg = safeEval(arg, call.callerEnv);
+                if (arg == R_UnboundValue) {
+                    notObj = false;
+                    isEager = false;
+                }
+                // will never be filled promise or missing
+            } else {
+                call.incSafeForceCounter();
             }
-            // callImplicit already handles missing
         } else if (TYPEOF(arg) == PROMSXP) {
             arg = PRVALUE(arg);
             if (arg == R_UnboundValue) {
@@ -1973,7 +1977,10 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             // Callee is TOS
             // Arguments and names are immediate given as promise code indices.
-            size_t n = readImmediate();
+            Immediate n = readImmediate();
+            n &= ((unsigned)-1 >> pir::Parameter::RIR_SAFE_FORCE_WARMUP);
+            size_t* sfCounter =
+                (size_t*)(pc - pir::Parameter::RIR_SAFE_FORCE_WARMUP);
             advanceImmediate();
             size_t ast = readImmediate();
             advanceImmediate();
@@ -1984,7 +1991,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             auto names = (Immediate*)pc;
             advanceImmediateN(n);
             CallContext call(c, ostack_top(ctx), n, ast, arguments, names, env,
-                             given, ctx);
+                             given, sfCounter, ctx);
             res = doCall(call, ctx);
             ostack_pop(ctx); // callee
             ostack_push(ctx, res);
@@ -2018,7 +2025,10 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             // Callee is TOS
             // Arguments are immediate given as promise code indices.
-            size_t n = readImmediate();
+            Immediate n = readImmediate();
+            n &= ((unsigned)-1 >> pir::Parameter::RIR_SAFE_FORCE_WARMUP);
+            size_t* sfCounter =
+                (size_t*)(pc - pir::Parameter::RIR_SAFE_FORCE_WARMUP);
             advanceImmediate();
             size_t ast = readImmediate();
             advanceImmediate();
@@ -2027,7 +2037,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             auto arguments = (Immediate*)pc;
             advanceImmediateN(n);
             CallContext call(c, ostack_top(ctx), n, ast, arguments, env, given,
-                             ctx);
+                             sfCounter, ctx);
             res = doCall(call, ctx);
             ostack_pop(ctx); // callee
             ostack_push(ctx, res);
@@ -2044,7 +2054,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 #endif
 
             // Stack contains [callee, arg1, ..., argn]
-            Immediate n = readImmediate();
+            size_t n = readImmediate();
             advanceImmediate();
             size_t ast = readImmediate();
             advanceImmediate();
@@ -3655,9 +3665,8 @@ SEXP rirApplyClosure(SEXP ast, SEXP op, SEXP arglist, SEXP rho,
 
     CallContext call(nullptr, op, nargs, ast, ostack_cell_at(ctx, nargs - 1),
                      nullptr, names.empty() ? nullptr : names.data(), rho,
-                     Assumptions(), ctx);
+                     Assumptions(), nullptr, ctx);
     call.arglist = arglist;
-    call.safeForceArgs();
 
     auto res = rirCall(call, ctx);
     ostack_popn(ctx, call.passedArgs);

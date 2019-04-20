@@ -8,8 +8,6 @@
 
 namespace rir {
 
-// #define DEBUG_SAFE_EVAL
-
 SEXP safeEval(SEXP e, SEXP rho) {
     if (e == R_UnboundValue) {
 #ifdef DEBUG_SAFE_EVAL
