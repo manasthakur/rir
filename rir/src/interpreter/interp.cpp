@@ -574,12 +574,11 @@ static void addDynamicAssumptionsFromContext(CallContext& call,
                     notObj = false;
                     isEager = false;
                 }
-            } else if (arg.tag == STACK_OBJ_SEXP &&
-                       arg.u.sxpval == R_MissingArg) {
+            } else if (arg.u.sxpval == R_MissingArg) {
                 given.remove(Assumption::NoExplicitlyMissingArgs);
                 isEager = false;
             }
-            if (arg.tag == STACK_OBJ_SEXP && isObject(arg.u.sxpval)) {
+            if (isObject(arg.u.sxpval)) {
                 notObj = false;
             }
             if (isEager)
@@ -1014,11 +1013,8 @@ static void cachedSetVar(R_bcstack_t* val, SEXP env, Immediate idx,
     SEXP loc = cachedGetBindingCell(env, idx, ctx, bindingCache);
     if (loc && !BINDING_IS_LOCKED(loc) && !IS_ACTIVE_BINDING(loc)) {
         SEXP cur = CAR(loc);
-        if (val->tag == STACK_OBJ_SEXP && val->u.sxpval == cur) {
+        if (val->u.sxpval == cur) {
             return;
-        } else if (val->tag != STACK_OBJ_SEXP && NOT_SHARED(cur) &&
-                   IS_SIMPLE_SCALAR(cur, val->tag)) {
-            return setInPlace(cur, val);
         }
         SEXP valSexp = stackObjToSexp(val); // Value should be popped off stack
         INCREMENT_NAMED(valSexp);
@@ -2052,23 +2048,14 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
         INSTRUCTION(inc_) {
             R_bcstack_t* val = ostackCellAt(ctx, 0);
             SLOWASSERT(stackObjIsSimpleScalar(val, INTSXP));
-            switch (val->tag) {
-            case STACK_OBJ_INT:
-                val->u.ival = val->u.ival + 1;
-                break;
-            case STACK_OBJ_SEXP:
-                if (MAYBE_REFERENCED(val->u.sxpval)) {
-                    int i = INTEGER(val->u.sxpval)[0];
-                    ostackPop(ctx);
-                    SEXP n = Rf_allocVector(INTSXP, 1);
-                    INTEGER(n)[0] = i + 1;
-                    ostackPushSexp(ctx, n);
-                } else {
-                    INTEGER(val->u.sxpval)[0]++;
-                }
-                break;
-            default:
-                assert(false);
+            if (MAYBE_REFERENCED(val->u.sxpval)) {
+                int i = INTEGER(val->u.sxpval)[0];
+                ostackPop(ctx);
+                SEXP n = Rf_allocVector(INTSXP, 1);
+                INTEGER(n)[0] = i + 1;
+                ostackPushSexp(ctx, n);
+            } else {
+                INTEGER(val->u.sxpval)[0]++;
             }
             NEXT();
         }
@@ -2076,23 +2063,14 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
         INSTRUCTION(dec_) {
             R_bcstack_t* val = ostackCellAt(ctx, 0);
             SLOWASSERT(stackObjIsSimpleScalar(val, INTSXP));
-            switch (val->tag) {
-            case STACK_OBJ_INT:
-                val->u.ival = val->u.ival - 1;
-                break;
-            case STACK_OBJ_SEXP:
-                if (MAYBE_REFERENCED(val->u.sxpval)) {
-                    int i = INTEGER(val->u.sxpval)[0];
-                    ostackPop(ctx);
-                    SEXP n = Rf_allocVector(INTSXP, 1);
-                    INTEGER(n)[0] = i - 1;
-                    ostackPushSexp(ctx, n);
-                } else {
-                    INTEGER(val->u.sxpval)[0]--;
-                }
-                break;
-            default:
-                assert(false);
+            if (MAYBE_REFERENCED(val->u.sxpval)) {
+                int i = INTEGER(val->u.sxpval)[0];
+                ostackPop(ctx);
+                SEXP n = Rf_allocVector(INTSXP, 1);
+                INTEGER(n)[0] = i - 1;
+                ostackPushSexp(ctx, n);
+            } else {
+                INTEGER(val->u.sxpval)[0]--;
             }
             NEXT();
         }
@@ -2430,16 +2408,14 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
         INSTRUCTION(isobj_) {
             R_bcstack_t* val = ostackCellPop(ctx);
-            int logical_res =
-                val->tag == STACK_OBJ_SEXP && isObject(val->u.sxpval);
+            int logical_res = isObject(val->u.sxpval);
             ostackPushLogical(ctx, logical_res);
             NEXT();
         }
 
         INSTRUCTION(isstubenv_) {
             R_bcstack_t* val = ostackCellPop(ctx);
-            ostackPushLogical(ctx, val->tag == STACK_OBJ_SEXP &&
-                                       LazyEnvironment::cast(val->u.sxpval));
+            ostackPushLogical(ctx, (bool)LazyEnvironment::cast(val->u.sxpval));
             NEXT();
         }
 
@@ -2477,7 +2453,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
         INSTRUCTION(check_missing_) {
             R_bcstack_t val = ostackTop(ctx);
-            if (val.tag == STACK_OBJ_SEXP && val.u.sxpval == R_MissingArg)
+            if (val.u.sxpval == R_MissingArg)
                 Rf_error("argument is missing, with no default");
             NEXT();
         }
@@ -2486,7 +2462,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             R_bcstack_t* val = ostackCellTop(ctx);
             JumpOffset offset = readJumpOffset();
             advanceJump();
-            if (val->tag == STACK_OBJ_SEXP && isObject(val->u.sxpval))
+            if (isObject(val->u.sxpval))
                 pc += offset;
             PC_BOUNDSCHECK(pc, c);
             NEXT();
@@ -2975,8 +2951,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             }
 
             if (!has_res) {
-                SLOWASSERT(typeFrom != STACK_OBJ_SEXP ||
-                           !isObject(ostackCellAt(ctx, 2)->u.sxpval));
+                SLOWASSERT(!isObject(ostackCellAt(ctx, 2)->u.sxpval));
                 SEXP call = getSrcForCall(c, pc - 1, ctx);
                 PROTECT(call);
                 SEXP fromSexp = ostackSexpAt(ctx, 2);
@@ -3074,8 +3049,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             int value;
             if (stackObjIsVector(seq)) {
                 value = stackObjLength(seq);
-            } else if (seq->tag == STACK_OBJ_SEXP &&
-                       (Rf_isList(seq->u.sxpval) || isNull(seq->u.sxpval))) {
+            } else if (Rf_isList(seq->u.sxpval) || isNull(seq->u.sxpval)) {
                 value = Rf_length(seq->u.sxpval);
             } else {
                 Rf_errorcall(R_NilValue, "invalid for() loop sequence");
@@ -3085,7 +3059,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             // extract2_1 BC on it, we would. To prevent this we strip
             // the object flag here. What we should do instead, is use a
             // non-dispatching extract BC.
-            if (seq->tag == STACK_OBJ_SEXP && isObject(seq->u.sxpval)) {
+            if (isObject(seq->u.sxpval)) {
                 SEXP seqSexp = Rf_duplicate(seq->u.sxpval);
                 SET_OBJECT(seqSexp, 0);
                 ostackSetSexp(ctx, 0, seqSexp);
@@ -3106,15 +3080,13 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
         INSTRUCTION(ensure_named_) {
             R_bcstack_t* val = ostackCellTop(ctx);
-            if (val->tag == STACK_OBJ_SEXP) {
-                ENSURE_NAMED(val->u.sxpval);
-            }
+            ENSURE_NAMED(val->u.sxpval);
             NEXT();
         }
 
         INSTRUCTION(set_shared_) {
             R_bcstack_t* val = ostackCellTop(ctx);
-            if (val->tag == STACK_OBJ_SEXP && NAMED(val->u.sxpval) < 2) {
+            if (NAMED(val->u.sxpval) < 2) {
                 SET_NAMED(val->u.sxpval, 2);
             }
             NEXT();
