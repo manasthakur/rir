@@ -945,7 +945,7 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 
 static bool coinFlip() {
     static std::mt19937 gen(Parameter::DEOPT_CHAOS_SEED);
-    static std::bernoulli_distribution coin(0.03);
+    static std::bernoulli_distribution coin(Parameter::DEOPT_CHAOS_PROB);
     return coin(gen);
 };
 
@@ -1125,9 +1125,12 @@ bool Parameter::DEBUG_DEOPTS = getenv("PIR_DEBUG_DEOPTS") &&
                                0 == strncmp("1", getenv("PIR_DEBUG_DEOPTS"), 1);
 bool Parameter::DEOPT_CHAOS = getenv("PIR_DEOPT_CHAOS") &&
                               0 == strncmp("1", getenv("PIR_DEOPT_CHAOS"), 1);
-bool Parameter::DEOPT_CHAOS_SEED = getenv("PIR_DEOPT_CHAOS_SEED")
-                                       ? atoi(getenv("PIR_DEOPT_CHAOS_SEED"))
-                                       : std::random_device()();
+unsigned Parameter::DEOPT_CHAOS_SEED =
+    getenv("PIR_DEOPT_CHAOS_SEED") ? atoi(getenv("PIR_DEOPT_CHAOS_SEED"))
+                                   : std::random_device()();
+double Parameter::DEOPT_CHAOS_PROB = getenv("PIR_DEOPT_CHAOS_PROB")
+                                         ? atof(getenv("PIR_DEOPT_CHAOS_PROB"))
+                                         : 0.05;
 
 } // namespace pir
 } // namespace rir

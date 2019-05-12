@@ -52,6 +52,10 @@ completely disables the PIR optimizer. As follows are the different Options avai
 
     PIR_DEOPT_CHAOS=
         1          randomly trigger some percent of deopts
+    PIR_DEOPT_CHAOS_SEED=
+        n          seed for randomness
+    PIR_DEOPT_CHAOS_PROB=
+        0.0-1.0    % of deopts triggered, 1 means always deopt
 
     PIR_DEBUG_DEOPTS=
         1          show failing assumption when a deopt happens
