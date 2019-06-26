@@ -11,6 +11,8 @@ SEXP safeEval(SEXP e, SEXP rho);
 // Will try to evaluate the promise if it definitely doesn't cause side effects
 SEXP safeForcePromise(SEXP e);
 
+SEXP rirForcePromise(SEXP e);
+
 } // namespace rir
 
 #endif

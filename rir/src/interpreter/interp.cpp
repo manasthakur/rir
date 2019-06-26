@@ -126,7 +126,7 @@ static RIR_INLINE SEXP promiseValue(SEXP promise, InterpreterInstance* ctx) {
         assert(TYPEOF(promise) != PROMSXP);
         return promise;
     } else {
-        SEXP res = forcePromise(promise);
+        SEXP res = rirForcePromise(promise);
         assert(TYPEOF(res) != PROMSXP && "promise returned promise");
         return res;
     }
