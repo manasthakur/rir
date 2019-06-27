@@ -2,6 +2,7 @@
 #define interpreter_context_h
 
 #include "R/r.h"
+#include "compiler/pir/effects.h"
 #include "ir/BC_inc.h"
 #include "runtime/Assumptions.h"
 
@@ -11,6 +12,7 @@
 
 #include <assert.h>
 #include <functional>
+#include <stack>
 #include <stdint.h>
 
 namespace rir {
@@ -60,6 +62,30 @@ struct InterpreterInstance {
     ExprCompiler exprCompiler;
     ClosureCompiler closureCompiler;
     ClosureOptimizer closureOptimizer;
+    std::stack<pir::Effects> effectsStack;
+
+    void startRecordingEffects() {
+        effectsStack.push(pir::Effects::None());
+        assert(!effectsStack.empty());
+    }
+
+    pir::Effects stopRecordingEffects() {
+        assert(!effectsStack.empty());
+        pir::Effects top = effectsStack.top();
+        effectsStack.pop();
+        recordEffects(top);
+        return top;
+    }
+
+    void recordEffect(pir::Effect effect) {
+        if (!effectsStack.empty())
+            effectsStack.top().set(effect);
+    }
+
+    void recordEffects(pir::Effects effects) {
+        if (!effectsStack.empty())
+            effectsStack.top() = effectsStack.top() | effects;
+    }
 };
 
 // TODO we might actually need to do more for the lengths (i.e. true length vs

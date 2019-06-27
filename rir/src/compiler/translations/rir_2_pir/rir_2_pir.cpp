@@ -143,6 +143,19 @@ Checkpoint* Rir2Pir::addCheckpoint(rir::Code* srcCode, Opcode* pos,
     // anymore) and checkpoints in eagerly inlined promises are wrong. So for
     // now we do not emit them in promises!
     assert(!inPromise());
+
+    // Add deopt after instructions which expect an earlier instruction before
+    while (true) {
+        Opcode* nextPos = pos;
+        BC next = BC::advance(&nextPos, srcCode);
+        if (int shift = next.moveBeforeDeopt())
+            pos -= shift;
+        else if (next.moveAfterDeopt())
+            pos = nextPos;
+        else
+            break;
+    }
+
     return insert.emitCheckpoint(srcCode, pos, stack);
 }
 
@@ -307,6 +320,13 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::record_call_: {
         Value* target = top();
         callTargetFeedback[target] = bc.immediate.callFeedback;
+        break;
+    }
+
+    case Opcode::record_effects_: {
+        Instruction* target = Instruction::Cast(top());
+        assert(target != NULL);
+        target->effectFeedback = target->effectFeedback | bc.immediate.effects;
         break;
     }
 
@@ -782,6 +802,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
 
     // Silently ignored
     case Opcode::clear_binding_cache_:
+    case Opcode::start_recording_effects_:
     // TODO implement!
     case Opcode::isfun_:
         break;
@@ -829,6 +850,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::ldvar_noforce_stubbed_:
     case Opcode::stvar_stubbed_:
     case Opcode::assert_type_:
+    case Opcode::check_effects_:
         log.unsupportedBC("Unsupported BC (are you recompiling?)", bc);
         assert(false && "Recompiling PIR not supported for now.");
 

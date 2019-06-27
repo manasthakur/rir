@@ -570,6 +570,9 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
         // The ldvarForUpdate BC increments the named count if the target is
         // not local to the current environment.
 
+        if (Compiler::profile)
+            cs << BC::startRecordingEffects();
+
         if (superAssign) {
             cs << BC::ldvarSuper(target);
         } else {
@@ -580,8 +583,10 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
                 cs << BC::ldvar(target);
         }
 
-        if (Compiler::profile)
+        if (Compiler::profile) {
             cs << BC::recordType();
+            cs << BC::recordEffects();
+        }
 
         // And index
         compileExpr(ctx, *idx);
@@ -1086,12 +1091,16 @@ void compileGetvar(CompilerContext& ctx, SEXP name, bool needsVisible = true) {
     } else if (name == R_MissingArg) {
         cs << BC::push(R_MissingArg);
     } else {
+        if (Compiler::profile)
+            cs << BC::startRecordingEffects();
         if (ctx.code.top()->isCached(name))
             cs << BC::ldvarCached(name, ctx.code.top()->cacheSlotFor(name));
         else
             cs << BC::ldvar(name);
-        if (Compiler::profile)
+        if (Compiler::profile) {
             cs << BC::recordType();
+            cs << BC::recordEffects();
+        }
     }
     if (needsVisible)
         cs << BC::visible();

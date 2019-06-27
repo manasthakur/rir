@@ -2,6 +2,7 @@
 #define COMPILER_INSTRUCTION_H
 
 #include "R/r.h"
+#include "effects.h"
 #include "env.h"
 #include "instruction_list.h"
 #include "ir/BC_inc.h"
@@ -80,38 +81,6 @@ struct InstrArg {
 // environment can happen.
 enum class HasEnvSlot : uint8_t { Yes, No };
 
-// Effect that can be produced by an instruction.
-enum class Effect : uint8_t {
-    // Changes R_Visible
-    Visibility,
-    // Instruction might produce a warning. Example: AsTest warns if the
-    // vector used in an if condition has length > 1
-    Warn,
-    // Instruction might produce an error. Example: ForSeqSize raises an
-    // error if the collection to loop over is not indexable.
-    Error,
-    // Instruction might force promises
-    Force,
-    // Instruction might use reflection
-    Reflection,
-    // Instruction might leak some of it's arguments
-    LeakArg,
-
-    ChangesContexts,
-    ReadsEnv,
-    WritesEnv,
-    LeaksEnv,
-
-    TriggerDeopt,
-
-    // Instruction might execute more R code
-    ExecuteCode,
-
-    FIRST = Visibility,
-    LAST = ExecuteCode,
-};
-typedef EnumSet<Effect> Effects;
-
 // Controlflow of instruction.
 enum class Controlflow : uint8_t {
     None,
@@ -141,6 +110,8 @@ class Instruction : public Value {
     Effects effects;
 
   public:
+    Effects effectFeedback = Effects::None();
+
     void clearEffects() { effects.reset(); }
     void clearVisibility() { effects.reset(Effect::Visibility); }
     void clearLeaksEnv() { effects.reset(Effect::LeaksEnv); }

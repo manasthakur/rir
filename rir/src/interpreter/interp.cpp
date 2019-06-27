@@ -28,6 +28,7 @@ extern Rboolean R_Visible;
 
 namespace rir {
 
+//#define PRINT_INTERP
 #ifdef PRINT_INTERP
 static void printInterp(Opcode* pc, Code* c) {
     BC bc = BC::decode(pc, c);
@@ -126,7 +127,7 @@ static RIR_INLINE SEXP promiseValue(SEXP promise, InterpreterInstance* ctx) {
         assert(TYPEOF(promise) != PROMSXP);
         return promise;
     } else {
-        SEXP res = rirForcePromise(promise);
+        SEXP res = rirForcePromise(promise, ctx);
         assert(TYPEOF(res) != PROMSXP && "promise returned promise");
         return res;
     }
@@ -3794,6 +3795,28 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 Rf_PrintValue(val);
                 assert(false);
             }
+            NEXT();
+        }
+
+        INSTRUCTION(start_recording_effects_) {
+            ctx->startRecordingEffects();
+            NEXT();
+        }
+
+        INSTRUCTION(record_effects_) {
+            pir::Effects* effects = (pir::Effects*)pc;
+            pir::Effects newEffects = ctx->stopRecordingEffects();
+            *effects = *effects | newEffects;
+            advanceImmediate();
+            NEXT();
+        }
+
+        INSTRUCTION(check_effects_) {
+            pir::Effects expected = pir::Effects(readImmediate());
+            advanceImmediate();
+            pir::Effects actual = ctx->stopRecordingEffects();
+            ostack_push(ctx,
+                        expected.includes(actual) ? R_TrueValue : R_FalseValue);
             NEXT();
         }
 

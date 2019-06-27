@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 
+#include "../compiler/pir/effects.h"
 #include "../compiler/pir/type.h"
 #include "R/r.h"
 #include "common.h"
@@ -166,6 +167,9 @@ class BC {
         ObservedValues typeFeedback;
         PoolAndCachePositionRange poolAndCache;
         CachePositionRange cacheIdx;
+        static_assert(sizeof(pir::Effects) == sizeof(Immediate),
+                      "effects must be == 1 immediate");
+        pir::Effects effects;
         ImmediateArguments() { memset(this, 0, sizeof(ImmediateArguments)); }
     };
 
@@ -421,6 +425,8 @@ BC_NOARGS(V, _)
                            SignedImmediate contextPos, bool stub);
     inline static BC clearBindingCache(CacheIdx start, unsigned size);
     inline static BC assertType(pir::PirType typ, SignedImmediate instr);
+    inline static BC recordEffects();
+    inline static BC checkEffects(pir::Effects effects);
 
     inline static BC decode(Opcode* pc, const Code* code) {
         BC cur;
@@ -434,6 +440,9 @@ BC_NOARGS(V, _)
         cur.decodeFixlen(pc);
         return cur;
     }
+
+    int moveBeforeDeopt();
+    bool moveAfterDeopt();
 
   private:
     // Some Bytecodes need extra information. For example in the case of the
@@ -727,6 +736,10 @@ BC_NOARGS(V, _)
             break;
         case Opcode::assert_type_:
             memcpy(&immediate.assertTypeArgs, pc, sizeof(AssertTypeArgs));
+            break;
+        case Opcode::record_effects_:
+        case Opcode::check_effects_:
+            memcpy(&immediate.effects, pc, sizeof(pir::Effects));
             break;
         case Opcode::invalid_:
         case Opcode::num_of:

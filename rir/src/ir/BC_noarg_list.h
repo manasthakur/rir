@@ -68,7 +68,8 @@
     V(NESTED, swap, swap)                                                      \
     V(NESTED, isobj, isobj)                                                    \
     V(NESTED, isstubenv, isstubenv)                                            \
-    V(NESTED, return_, return )
+    V(NESTED, return_, return )                                                \
+    V(NESTED, startRecordingEffects, start_recording_effects)
 
 #undef V_SIMPLE_INSTRUCTION
 

@@ -147,6 +147,11 @@ BC_NOARGS(V, _)
         cs.insert(immediate.assertTypeArgs);
         return;
 
+    case Opcode::record_effects_:
+    case Opcode::check_effects_:
+        cs.insert(immediate.effects);
+        return;
+
     case Opcode::invalid_:
     case Opcode::num_of:
         assert(false);
@@ -660,8 +665,34 @@ BC_NOARGS(V, _)
     case Opcode::assert_type_:
         out << immediate.assertTypeArgs.pirType();
         break;
+    case Opcode::record_effects_:
+    case Opcode::check_effects_:
+        pir::printEffects(out, immediate.effects);
+        break;
     }
     out << "\n";
+}
+
+int BC::moveBeforeDeopt() {
+    switch (bc) {
+    case Opcode::ldvar_:
+    case Opcode::ldvar_super_:
+    case Opcode::ldvar_cached_:
+    case Opcode::ldvar_for_update_cache_:
+        return 1; // before start_recording_effects_
+    default:
+        return 0;
+    }
+}
+
+bool BC::moveAfterDeopt() {
+    switch (bc) {
+    case Opcode::record_type_:
+    case Opcode::record_effects_:
+        return true;
+    default:
+        return false;
+    }
 }
 
 } // namespace rir

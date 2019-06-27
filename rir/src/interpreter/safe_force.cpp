@@ -3,7 +3,6 @@
 #include "R/Sexp.h"
 #include "R/Symbols.h"
 #include "R/r.h"
-#include "interp_incl.h"
 
 #include <assert.h>
 
@@ -41,8 +40,8 @@ SEXP safeForcePromise(SEXP e) {
     }
 }
 
-static SEXP promiseEval(SEXP e, SEXP env) {
-#define DEBUG_EVAL
+static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
+//#define DEBUG_EVAL
 #ifdef DEBUG_EVAL
     std::cout << "Custom eval: ";
     Rf_PrintValue(e);
@@ -104,7 +103,7 @@ static SEXP promiseEval(SEXP e, SEXP env) {
     return res;
 }
 
-SEXP rirForcePromise(SEXP e) {
+SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
     // From GNU-R
     if (PRVALUE(e) != R_UnboundValue)
         return PRVALUE(e);
@@ -132,7 +131,7 @@ SEXP rirForcePromise(SEXP e) {
 
     // The original code is eval(PRCODE(e), PRENV(e))
     //
-    val = promiseEval(PRCODE(e), PRENV(e));
+    val = promiseEval(PRCODE(e), PRENV(e), ctx);
 
     /* Pop the stack, unmark the promise and set its value field.
        Also set the environment to R_NilValue to allow GC to

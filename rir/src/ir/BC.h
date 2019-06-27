@@ -382,6 +382,18 @@ BC BC::assertType(pir::PirType typ, SignedImmediate instr) {
     return BC(Opcode::assert_type_, i);
 }
 
+BC BC::recordEffects() {
+    ImmediateArguments i;
+    i.effects = pir::Effects::None();
+    return BC(Opcode::record_effects_, i);
+}
+
+BC BC::checkEffects(pir::Effects effects) {
+    ImmediateArguments i;
+    i.effects = effects;
+    return BC(Opcode::check_effects_, i);
+}
+
 } // namespace rir
 
 #endif

@@ -566,6 +566,21 @@ DEF_INSTR(deopt_, 1, -1, 0, 0)
 DEF_INSTR(record_call_, 4, 1, 1, 0)
 DEF_INSTR(record_type_, 1, 1, 1, 0)
 
+/*
+ * pushes an "effects frame" for record_effects or check_effects
+ */
+DEF_INSTR(start_recording_effects_, 0, 0, 0, 1)
+
+/*
+ * pops an "effects frame" pushed by a force, and records the effects
+ */
+DEF_INSTR(record_effects_, 1, 0, 0, 0)
+
+/*
+ * pops an "effects frame" and checks if we did the recorded effects
+ */
+DEF_INSTR(check_effects_, 1, 1, 0, 1)
+
 DEF_INSTR(int3_, 0, 0, 0, 0)
 DEF_INSTR(printInvocation_, 0, 0, 0, 0)
 
