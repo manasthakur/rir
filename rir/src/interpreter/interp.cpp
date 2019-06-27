@@ -28,11 +28,11 @@ extern Rboolean R_Visible;
 
 namespace rir {
 
-//#define PRINT_INTERP
+#define PRINT_INTERP
 #ifdef PRINT_INTERP
 static void printInterp(Opcode* pc, Code* c) {
     BC bc = BC::decode(pc, c);
-    std::cout << ">";
+    std::cout << "#";
     bc.print(std::cout);
 }
 
@@ -63,24 +63,31 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
 #define NEXT()                                                                 \
     (__extension__({                                                           \
         printInterp(pc, c);                                                    \
+        ctx->recordEffects(BC::effects(*pc));\
         goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
     }))
 #define LASTOP                                                                 \
     { printLastop(); }
 #else
 #define NEXT()                                                                 \
-    (__extension__({ goto* opAddr[static_cast<uint8_t>(advanceOpcode())]; }))
+    (__extension__({\
+        ctx->recordEffects(BC::effects(*pc));\
+        goto* opAddr[static_cast<uint8_t>(advanceOpcode())];\
+    })) 
 #define LASTOP                                                                 \
     {}
 #endif
 #else
 #define BEGIN_MACHINE                                                          \
+    ctx->recordEffects(BC::effects(*pc));\
     loop:                                                                      \
     switch (advanceOpcode())
 #define INSTRUCTION(name)                                                      \
     case Opcode::name:                                                         \
         /* debug(c, pc, #name, ostack_length(ctx) - bp, ctx); */
-#define NEXT() goto loop
+#define NEXT()\
+    ctx->recordEffects(BC::effects(*pc));\
+    goto loop
 #define LASTOP                                                                 \
     default:                                                                   \
         assert(false && "wrong or unimplemented opcode")

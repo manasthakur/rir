@@ -240,6 +240,18 @@ class BC {
     }
     inline size_t pushCount() { return pushCount(bc); }
 
+    static unsigned effects(Opcode bc) {
+        switch (bc) {
+#define DEF_INSTR(name, imm, opop, opush, pure)                                \
+    case Opcode::name:                                                         \
+        return pir::Effects::None();
+#include "insns.h"
+        default:
+            assert(false);
+            return pir::Effects::Any();
+        }
+    }
+
     // Used to serialize bc to CodeStream
     void write(CodeStream& cs) const;
 

@@ -1,4 +1,5 @@
 #include "safe_force.h"
+#include "instance.h"
 #include "R/RList.h"
 #include "R/Sexp.h"
 #include "R/Symbols.h"
@@ -43,7 +44,7 @@ SEXP safeForcePromise(SEXP e) {
 static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
 //#define DEBUG_EVAL
 #ifdef DEBUG_EVAL
-    std::cout << "Custom eval: ";
+    std::cout << "Custom eval of " << TYPEOF(e) << ": ";
     Rf_PrintValue(e);
 #endif
     // From GNU-R eval
@@ -90,9 +91,11 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
     SEXP res = NULL;
     switch (TYPEOF(e)) {
     case EXTERNALSXP:
+        ctx->recordEffects(pir::Effects::Any());
         res = rirEval_f(e, env);
         break;
     default:
+        ctx->recordEffects(pir::Effects::Any());
         res = Rf_eval(e, env);
         break;
     }
