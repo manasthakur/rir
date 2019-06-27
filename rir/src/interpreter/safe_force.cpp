@@ -91,7 +91,6 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
     SEXP res = NULL;
     switch (TYPEOF(e)) {
     case EXTERNALSXP:
-        ctx->recordEffects(pir::Effects::Any());
         res = rirEval_f(e, env);
         break;
     default:

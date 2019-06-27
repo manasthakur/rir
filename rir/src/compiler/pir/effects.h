@@ -39,6 +39,9 @@ enum class Effect : uint8_t {
 };
 typedef EnumSet<Effect, unsigned> Effects;
 
+static const Effects errorEffects =
+    Effects(Effect::Visibility) | Effect::Warn | Effect::Error;
+
 void printEffects(std::ostream& out, Effects effects);
 
 } // namespace pir
