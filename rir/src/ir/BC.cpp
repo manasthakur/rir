@@ -147,9 +147,8 @@ BC_NOARGS(V, _)
         cs.insert(immediate.assertTypeArgs);
         return;
 
-    case Opcode::record_effects_:
-    case Opcode::check_effects_:
-        cs.insert(immediate.effects);
+    case Opcode::record_pure_:
+        cs.insert(immediate.i);
         return;
 
     case Opcode::invalid_:
@@ -300,6 +299,7 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
         case Opcode::ldvar_noforce_stubbed_:
         case Opcode::stvar_stubbed_:
         case Opcode::clear_binding_cache_:
+        case Opcode::record_pure_:
             assert((size - 1) % 4 == 0);
             InBytes(inp, code + 1, size - 1);
             break;
@@ -438,6 +438,7 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
         case Opcode::ldvar_noforce_stubbed_:
         case Opcode::stvar_stubbed_:
         case Opcode::clear_binding_cache_:
+        case Opcode::record_pure_:
             assert((size - 1) % 4 == 0);
             if (size != 0)
                 OutBytes(out, code + 1, size - 1);
@@ -488,7 +489,8 @@ void BC::printOpcode(std::ostream& out) const { out << name(bc) << "  "; }
 
 void BC::print(std::ostream& out) const {
     out << "   ";
-    if (bc != Opcode::record_call_ && bc != Opcode::record_type_)
+    if (bc != Opcode::record_call_ && bc != Opcode::record_type_ &&
+        bc != Opcode::record_pure_)
         printOpcode(out);
 
     auto printTypeFeedback = [&](const ObservedValues& prof) {
@@ -665,9 +667,8 @@ BC_NOARGS(V, _)
     case Opcode::assert_type_:
         out << immediate.assertTypeArgs.pirType();
         break;
-    case Opcode::record_effects_:
-    case Opcode::check_effects_:
-        pir::printEffects(out, immediate.effects);
+    case Opcode::record_pure_:
+        out << "[ " << (immediate.i ? "ok" : "impure") << " ]";
         break;
     }
     out << "\n";
@@ -679,7 +680,7 @@ int BC::moveBeforeDeopt() {
     case Opcode::ldvar_super_:
     case Opcode::ldvar_cached_:
     case Opcode::ldvar_for_update_cache_:
-        return 1; // before start_recording_effects_
+        return 1; // before start_recording_pure_
     default:
         return 0;
     }
@@ -688,7 +689,7 @@ int BC::moveBeforeDeopt() {
 bool BC::moveAfterDeopt() {
     switch (bc) {
     case Opcode::record_type_:
-    case Opcode::record_effects_:
+    case Opcode::record_pure_:
         return true;
     default:
         return false;

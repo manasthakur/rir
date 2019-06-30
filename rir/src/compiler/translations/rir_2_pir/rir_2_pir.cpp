@@ -323,10 +323,11 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         break;
     }
 
-    case Opcode::record_effects_: {
+    case Opcode::record_pure_: {
         Instruction* target = Instruction::Cast(top());
         assert(target != NULL);
-        target->effectFeedback = target->effectFeedback | bc.immediate.effects;
+        target->hasPureFeedback = true;
+        target->pureFeedback &= bc.immediate.i;
         break;
     }
 
@@ -802,7 +803,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
 
     // Silently ignored
     case Opcode::clear_binding_cache_:
-    case Opcode::start_recording_effects_:
+    case Opcode::start_recording_pure_:
     // TODO implement!
     case Opcode::isfun_:
         break;
@@ -850,7 +851,8 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::ldvar_noforce_stubbed_:
     case Opcode::stvar_stubbed_:
     case Opcode::assert_type_:
-    case Opcode::check_effects_:
+    case Opcode::begin_sandbox_:
+    case Opcode::end_sandbox_:
         log.unsupportedBC("Unsupported BC (are you recompiling?)", bc);
         assert(false && "Recompiling PIR not supported for now.");
 

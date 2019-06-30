@@ -57,9 +57,14 @@ PassScheduler::PassScheduler() {
     // This pass is scheduled second, since we want to first try to do this
     // statically in Phase 1
     add<TypeSpeculation>();
+    // Doesnt't speculate effects here, because it lets us delay the MkEnv past
+    // a checkpoint, but then ElideEnvSpec can't stub it. Perhaps ElideEnvSpec
+    // should be able to move an environment back, if it can then be elided?
+    // add<EffectSpeculation>
     add<ElideEnvSpec>();
     addDefaultOpt();
     add<TypeSpeculation>();
+    add<EffectSpeculation>();
     add<ElideEnvSpec>();
 
     add<PhaseMarker>("Phase 2: Env speculation");

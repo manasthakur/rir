@@ -140,6 +140,8 @@ class PASS(TypeInference);
 
 class PASS(TypeSpeculation);
 
+class PASS(EffectSpeculation);
+
 /*
  * Loop Invariant Code motion
  */

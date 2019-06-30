@@ -167,9 +167,6 @@ class BC {
         ObservedValues typeFeedback;
         PoolAndCachePositionRange poolAndCache;
         CachePositionRange cacheIdx;
-        static_assert(sizeof(pir::Effects) == sizeof(Immediate),
-                      "effects must be == 1 immediate");
-        pir::Effects effects;
         ImmediateArguments() { memset(this, 0, sizeof(ImmediateArguments)); }
     };
 
@@ -240,15 +237,16 @@ class BC {
     }
     inline size_t pushCount() { return pushCount(bc); }
 
-    static unsigned effects(Opcode bc) {
+    static bool isPure(Opcode bc) {
         switch (bc) {
-#define DEF_INSTR(name, imm, opop, opush, effects)                             \
+#define DEF_INSTR(name, imm, opop, opush, pure)                                \
     case Opcode::name:                                                         \
-        return effects;
+        return pure;
 #include "insns.h"
+#undef DEF_INSTR
         default:
             assert(false);
-            return pir::Effects::Any();
+            return false;
         }
     }
 
@@ -435,8 +433,7 @@ BC_NOARGS(V, _)
                            SignedImmediate contextPos, bool stub);
     inline static BC clearBindingCache(CacheIdx start, unsigned size);
     inline static BC assertType(pir::PirType typ, SignedImmediate instr);
-    inline static BC recordEffects();
-    inline static BC checkEffects(pir::Effects effects);
+    inline static BC recordPure();
 
     inline static BC decode(Opcode* pc, const Code* code) {
         BC cur;
@@ -593,7 +590,7 @@ BC_NOARGS(V, _)
 
     static unsigned RIR_INLINE fixedSize(Opcode bc) {
         switch (bc) {
-#define DEF_INSTR(name, imm, opop, opush, effects)                             \
+#define DEF_INSTR(name, imm, opop, opush, pure)                                \
     case Opcode::name:                                                         \
         return imm * sizeof(Immediate) + 1;
 #include "insns.h"
@@ -604,7 +601,7 @@ BC_NOARGS(V, _)
 
     static char const* name(Opcode bc) {
         switch (bc) {
-#define DEF_INSTR(name, imm, opop, opush, effects)                             \
+#define DEF_INSTR(name, imm, opop, opush, pure)                                \
     case Opcode::name:                                                         \
         return #name;
 #include "insns.h"
@@ -615,7 +612,7 @@ BC_NOARGS(V, _)
 
     static unsigned pushCount(Opcode bc) {
         switch (bc) {
-#define DEF_INSTR(name, imm, opop, opush, effects)                             \
+#define DEF_INSTR(name, imm, opop, opush, pure)                                \
     case Opcode::name:                                                         \
         return opush;
 #include "insns.h"
@@ -627,7 +624,7 @@ BC_NOARGS(V, _)
 
     static unsigned popCount(Opcode bc) {
         switch (bc) {
-#define DEF_INSTR(name, imm, opop, opush, effects)                             \
+#define DEF_INSTR(name, imm, opop, opush, pure)                                \
     case Opcode::name:                                                         \
         assert(opop != -1);                                                    \
         return opop;
@@ -735,9 +732,8 @@ BC_NOARGS(V, _)
         case Opcode::assert_type_:
             memcpy(&immediate.assertTypeArgs, pc, sizeof(AssertTypeArgs));
             break;
-        case Opcode::record_effects_:
-        case Opcode::check_effects_:
-            memcpy(&immediate.effects, pc, sizeof(pir::Effects));
+        case Opcode::record_pure_:
+            memcpy(&immediate.i, pc, sizeof(Immediate));
             break;
         case Opcode::invalid_:
         case Opcode::num_of:

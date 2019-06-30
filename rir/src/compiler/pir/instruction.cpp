@@ -130,12 +130,23 @@ void Instruction::printEnv(std::ostream& out, bool tty) const {
     }
 }
 
+void Instruction::printSandbox(std::ostream& out, bool tty) const {
+    if (isSandboxed()) {
+        out << ", sandboxed ";
+        if (sandboxCheckpoint_)
+            sandboxCheckpoint_->printRef(out);
+        else
+            out << "(lowered)";
+    }
+}
+
 void Instruction::print(std::ostream& out, bool tty) const {
     printPaddedTypeAndRef(out, this);
     printPaddedInstructionName(out, name());
     printPaddedEffects(out, tty, this);
     printArgs(out, tty);
     printEnv(out, tty);
+    printSandbox(out, tty);
 }
 
 void Instruction::printGraph(std::ostream& out, bool tty) const {
@@ -144,6 +155,7 @@ void Instruction::printGraph(std::ostream& out, bool tty) const {
     printPaddedEffects(out, tty, this);
     printGraphArgs(out, tty);
     printEnv(out, tty);
+    printSandbox(out, tty);
 }
 
 bool Instruction::validIn(Code* code) const { return bb()->owner == code; }
@@ -173,6 +185,8 @@ bool Instruction::unused() {
     return Visitor::check(bb(), [&](Instruction* i) {
         bool unused = true;
         i->eachArg([&](Value* v) { unused = unused && (v != this); });
+        if (i->sandboxCheckpoint_ == this)
+            unused = false;
         return unused;
     });
 }
@@ -194,6 +208,8 @@ Instruction* Instruction::hasSingleUse() {
     return nullptr;
 }
 
+void Instruction::cleanup() {}
+
 void Instruction::eraseAndRemove() { bb()->remove(this); }
 
 static void checkReplace(Instruction* origin, Value* replace) {
@@ -210,6 +226,18 @@ static void checkReplace(Instruction* origin, Value* replace) {
     }
 }
 
+static void replaceInOne(Instruction* i, Instruction* old, Value* replace) {
+    i->eachArg([&](InstrArg& arg) {
+        if (arg.val() == old)
+            arg.val() = replace;
+    });
+    if (i->sandboxCheckpoint_ == old) {
+        Checkpoint* replace_ = Checkpoint::Cast(replace);
+        assert(replace_ != NULL);
+        i->sandboxCheckpoint_ = replace_;
+    }
+}
+
 void Instruction::replaceUsesWithLimits(Value* replace, BB* start,
                                         Instruction* stop) {
     checkReplace(this, replace);
@@ -219,10 +247,7 @@ void Instruction::replaceUsesWithLimits(Value* replace, BB* start,
             for (auto& i : *bb) {
                 if (i == stop)
                     return;
-                i->eachArg([&](InstrArg& arg) {
-                    if (arg.val() == this)
-                        arg.val() = replace;
-                });
+                replaceInOne(i, this, replace);
             }
         });
     };
@@ -234,10 +259,7 @@ void Instruction::replaceUsesWithLimits(Value* replace, BB* start,
         bool found = false;
         for (auto& i : *start) {
             if (found) {
-                i->eachArg([&](InstrArg& arg) {
-                    if (arg.val() == this)
-                        arg.val() = replace;
-                });
+                replaceInOne(i, this, replace);
             }
             if (!found && i == this)
                 found = true;
@@ -264,10 +286,7 @@ void Instruction::replaceUsesWith(Value* replace) {
     checkReplace(this, replace);
     Visitor::run(bb(), [&](BB* bb) {
         for (auto& i : *bb) {
-            i->eachArg([&](InstrArg& arg) {
-                if (arg.val() == this)
-                    arg.val() = replace;
-            });
+            replaceInOne(i, this, replace);
         }
     });
 

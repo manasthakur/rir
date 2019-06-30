@@ -52,6 +52,56 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
     return src_pool_at(ctx, sidx);
 }
 
+static RIR_INLINE void raiseWarningCall(InterpreterInstance* ctx, SEXP src,
+                                        const char* msg) {
+    ctx->recordPure(false);
+    Rf_warningcall(src, msg);
+}
+
+template <typename... Args>
+static RIR_INLINE void raiseWarningCall(InterpreterInstance* ctx, SEXP src,
+                                        const char* msg, Args... args) {
+    ctx->recordPure(false);
+    Rf_warningcall(src, msg, args...);
+}
+
+static RIR_INLINE void raiseWarning(InterpreterInstance* ctx, const char* msg) {
+    ctx->recordPure(false);
+    Rf_warning(msg);
+}
+
+template <typename... Args>
+static RIR_INLINE void raiseWarning(InterpreterInstance* ctx, const char* msg,
+                                    Args... args) {
+    ctx->recordPure(false);
+    Rf_warning(msg, args...);
+}
+
+static RIR_INLINE void raiseErrorCall(InterpreterInstance* ctx, SEXP src,
+                                      const char* msg) {
+    ctx->recordPure(false);
+    Rf_errorcall(src, msg);
+}
+
+template <typename... Args>
+static RIR_INLINE void raiseErrorCall(InterpreterInstance* ctx, SEXP src,
+                                      const char* msg, Args... args) {
+    ctx->recordPure(false);
+    Rf_errorcall(src, msg, args...);
+}
+
+static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg) {
+    ctx->recordPure(false);
+    Rf_error(msg);
+}
+
+template <typename... Args>
+static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg,
+                                  Args... args) {
+    ctx->recordPure(false);
+    Rf_error(msg, args...);
+}
+
 #define PC_BOUNDSCHECK(pc, c)                                                  \
     SLOWASSERT((pc) >= (c)->code() && (pc) < (c)->endCode());
 
@@ -63,30 +113,30 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
 #define NEXT()                                                                 \
     (__extension__({                                                           \
         printInterp(pc, c);                                                    \
-        ctx->recordEffects(BC::effects(*pc));\
+        ctx->recordPure(BC::isPure(*pc));                                      \
         goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
     }))
 #define LASTOP                                                                 \
     { printLastop(); }
 #else
 #define NEXT()                                                                 \
-    (__extension__({\
-        ctx->recordEffects(BC::effects(*pc));\
-        goto* opAddr[static_cast<uint8_t>(advanceOpcode())];\
-    })) 
+    (__extension__({                                                           \
+        ctx->recordPure(BC::isPure(*pc));                                      \
+        goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
+    }))
 #define LASTOP                                                                 \
     {}
 #endif
 #else
 #define BEGIN_MACHINE                                                          \
-    ctx->recordEffects(BC::effects(*pc));\
+    ctx->recordPure(BC::isPure(*pc));                                          \
     loop:                                                                      \
     switch (advanceOpcode())
 #define INSTRUCTION(name)                                                      \
     case Opcode::name:                                                         \
         /* debug(c, pc, #name, ostack_length(ctx) - bp, ctx); */
-#define NEXT()\
-    ctx->recordEffects(BC::effects(*pc));\
+#define NEXT()                                                                 \
+    ctx->recordPure(BC::isPure(*pc));                                          \
     goto loop
 #define LASTOP                                                                 \
     default:                                                                   \
@@ -275,7 +325,7 @@ static SEXP createLegacyArgsList(CallContext& call, bool eagerCallee,
             }
         } else if (argi == MISSING_ARG_IDX) {
             if (eagerCallee)
-                Rf_errorcall(call.ast, "argument %d is empty", i + 1);
+                raiseErrorCall(ctx, call.ast, "argument %d is empty", i + 1);
             __listAppend(&result, &pos, R_MissingArg, R_NilValue);
         } else {
             if (eagerCallee) {
@@ -918,7 +968,7 @@ static SEXP doCall(CallContext& call, InterpreterInstance* ctx) {
         return rirCall(call, ctx);
     }
     default:
-        Rf_error("Invalid Callee");
+        raiseError(ctx, "Invalid Callee");
     };
     return R_NilValue;
 }
@@ -1027,7 +1077,7 @@ static SEXPREC createFakeCONS(SEXP cdr) {
         if (naflag) {                                                          \
             PROTECT(ans);                                                      \
             SEXP call = getSrcForCall(c, pc - 1, ctx);                         \
-            Rf_warningcall(call, INTEGER_OVERFLOW_WARNING);                    \
+            raiseWarningCall(ctx, call, INTEGER_OVERFLOW_WARNING);             \
             UNPROTECT(1);                                                      \
         }                                                                      \
     } while (0)
@@ -1160,12 +1210,12 @@ static double myfloor(double x1, double x2) {
     return floor(q) + floor(tmp / x2);
 }
 
-static double myfmod(double x1, double x2) {
+static double myfmod(InterpreterInstance* ctx, double x1, double x2) {
     if (x2 == 0.0)
         return R_NaN;
     double q = x1 / x2, tmp = x1 - floor(q) * x2;
     if (R_FINITE(q) && (fabs(q) > 1 / R_AccuracyInfo.eps))
-        Rf_warning("probable complete loss of accuracy in modulus");
+        raiseWarning(ctx, "probable complete loss of accuracy in modulus");
     q = floor(tmp / x2);
     return tmp - q * x2;
 }
@@ -1320,7 +1370,8 @@ RIR_INLINE static void castInt(bool ceil_, Code* c, Opcode* pc,
     if (TYPEOF(val) == INTSXP || TYPEOF(val) == REALSXP ||
         TYPEOF(val) == LGLSXP) {
         if (XLENGTH(val) == 0) {
-            Rf_errorcall(getSrcAt(c, pc - 1, ctx), "argument of length 0");
+            raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx),
+                           "argument of length 0");
             x = NA_INTEGER;
             isNaOrNan = false;
         } else {
@@ -1362,9 +1413,9 @@ RIR_INLINE static void castInt(bool ceil_, Code* c, Opcode* pc,
                 assert(false);
             }
             if (XLENGTH(val) > 1) {
-                Rf_warningcall(getSrcAt(c, pc - 1, ctx),
-                               "numerical expression has multiple "
-                               "elements: only the first used");
+                raiseWarningCall(ctx, getSrcAt(c, pc - 1, ctx),
+                                 "numerical expression has multiple "
+                                 "elements: only the first used");
             }
         }
     } else { // Everything else
@@ -1372,7 +1423,7 @@ RIR_INLINE static void castInt(bool ceil_, Code* c, Opcode* pc,
         isNaOrNan = true;
     }
     if (isNaOrNan) {
-        Rf_errorcall(getSrcAt(c, pc - 1, ctx), "NA/NaN argument");
+        raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx), "NA/NaN argument");
     }
     SEXP res = Rf_allocVector(INTSXP, 1);
     *INTEGER(res) = x;
@@ -1754,7 +1805,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 // special and builtin functions are ok
                 break;
             default:
-                Rf_error("attempt to apply non-function");
+                raiseError(ctx, "attempt to apply non-function");
             }
             ostack_push(ctx, res);
             NEXT();
@@ -1776,11 +1827,12 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
@@ -1816,11 +1868,12 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
@@ -1849,11 +1902,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             auto res = le->getArg(pos);
 
             if (res == R_UnboundValue) {
-                Rf_error("object \"%s\" not found",
-                         CHAR(PRINTNAME(Pool::get(le->names[pos]))));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(Pool::get(le->names[pos]))));
             } else if (res == R_MissingArg) {
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(Pool::get(le->names[pos]))));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(Pool::get(le->names[pos]))));
             }
 
             if (res != R_NilValue)
@@ -1869,10 +1922,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, env);
 
             if (res == R_UnboundValue) {
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             } else if (TYPEOF(res) == PROMSXP) {
                 // if promise, evaluate & return
                 res = promiseValue(res, ctx);
@@ -1894,11 +1948,12 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
@@ -1918,10 +1973,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, env);
 
             if (res == R_UnboundValue) {
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             if (res != R_NilValue)
@@ -1940,11 +1996,12 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             if (res != R_NilValue)
@@ -1960,10 +2017,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, ENCLOS(env));
 
             if (res == R_UnboundValue) {
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
@@ -1983,10 +2041,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, ENCLOS(env));
 
             if (res == R_UnboundValue) {
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             if (res != R_NilValue)
@@ -2002,10 +2061,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_ddfindVar(sym, env);
 
             if (res == R_UnboundValue) {
-                Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "object \"%s\" not found",
+                           CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                Rf_error("argument \"%s\" is missing, with no default",
-                         CHAR(PRINTNAME(sym)));
+                raiseError(ctx, "argument \"%s\" is missing, with no default",
+                           CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
@@ -2386,7 +2446,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 // TODO for now - we might be fancier here later
                 break;
             default:
-                Rf_error("attempt to apply non-function");
+                raiseError(ctx, "attempt to apply non-function");
             }
             NEXT();
         }
@@ -2660,15 +2720,17 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (IS_SIMPLE_SCALAR(lhs, REALSXP) &&
                 IS_SIMPLE_SCALAR(rhs, REALSXP)) {
-                double real_res = myfmod(*REAL(lhs), *REAL(rhs));
+                double real_res = myfmod(ctx, *REAL(lhs), *REAL(rhs));
                 STORE_BINOP(REALSXP, 0, real_res);
             } else if (IS_SIMPLE_SCALAR(lhs, REALSXP) &&
                        IS_SIMPLE_SCALAR(rhs, INTSXP)) {
-                double real_res = myfmod(*REAL(lhs), (double)*INTEGER(rhs));
+                double real_res =
+                    myfmod(ctx, *REAL(lhs), (double)*INTEGER(rhs));
                 STORE_BINOP(REALSXP, 0, real_res);
             } else if (IS_SIMPLE_SCALAR(lhs, INTSXP) &&
                        IS_SIMPLE_SCALAR(rhs, REALSXP)) {
-                double real_res = myfmod((double)*INTEGER(lhs), *REAL(rhs));
+                double real_res =
+                    myfmod(ctx, (double)*INTEGER(lhs), *REAL(rhs));
                 STORE_BINOP(REALSXP, 0, real_res);
             } else if (IS_SIMPLE_SCALAR(lhs, INTSXP) &&
                        IS_SIMPLE_SCALAR(rhs, INTSXP)) {
@@ -2680,7 +2742,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 } else {
                     int_res = (l >= 0 && r > 0)
                                   ? l % r
-                                  : (int)myfmod((double)l, (double)r);
+                                  : (int)myfmod(ctx, (double)l, (double)r);
                 }
                 STORE_BINOP(INTSXP, int_res, 0);
             } else {
@@ -2859,8 +2921,8 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             SEXP val = ostack_top(ctx);
             int cond = NA_LOGICAL;
             if (XLENGTH(val) > 1)
-                Rf_warningcall(
-                    getSrcAt(c, pc - 1, ctx),
+                raiseWarningCall(
+                    ctx, getSrcAt(c, pc - 1, ctx),
                     "the condition has length > 1 and only the first "
                     "element will be used");
 
@@ -2885,7 +2947,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                                ? ("missing value where TRUE/FALSE needed")
                                : ("argument is not interpretable as logical"))
                         : ("argument is of length zero");
-                Rf_errorcall(getSrcAt(c, pc - 1, ctx), msg);
+                raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx), msg);
             }
 
             ostack_pop(ctx);
@@ -2981,8 +3043,8 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             assert(env);
             SEXP val = R_findVarLocInFrame(env, sym).cell;
             if (val == NULL)
-                Rf_errorcall(getSrcAt(c, pc - 1, ctx),
-                             "'missing' can only be used for arguments");
+                raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx),
+                               "'missing' can only be used for arguments");
 
             if (MISSING(val) || CAR(val) == R_MissingArg) {
                 ostack_push(ctx, R_TrueValue);
@@ -3010,7 +3072,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
         INSTRUCTION(check_missing_) {
             SEXP val = ostack_top(ctx);
             if (val == R_MissingArg)
-                Rf_error("argument is missing, with no default");
+                raiseError(ctx, "argument is missing, with no default");
             NEXT();
         }
 
@@ -3519,7 +3581,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             advanceImmediate();
             advanceImmediate();
             if (res != Rf_findFun(sym, env))
-                Rf_error("Invalid Callee");
+                raiseError(ctx, "Invalid Callee");
             NEXT();
         }
 
@@ -3709,7 +3771,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             } else if (Rf_isList(seq) || isNull(seq)) {
                 INTEGER(value)[0] = Rf_length(seq);
             } else {
-                Rf_errorcall(R_NilValue, "invalid for() loop sequence");
+                raiseErrorCall(ctx, R_NilValue, "invalid for() loop sequence");
             }
             // TODO: Even when the for loop sequence is an object, R won't
             // dispatch on it. Since in RIR we use the normals extract2_1
@@ -3805,25 +3867,46 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             NEXT();
         }
 
-        INSTRUCTION(start_recording_effects_) {
-            ctx->startRecordingEffects();
+        INSTRUCTION(start_recording_pure_) {
+            ctx->startRecordingPure();
             NEXT();
         }
 
-        INSTRUCTION(record_effects_) {
-            pir::Effects* effects = (pir::Effects*)pc;
-            pir::Effects newEffects = ctx->stopRecordingEffects();
-            *effects = *effects | newEffects;
+        INSTRUCTION(record_pure_) {
+            bool* isPure = (bool*)pc;
+            bool newIsPure = ctx->stopRecordingPure();
+            *isPure &= newIsPure;
             advanceImmediate();
             NEXT();
         }
 
-        INSTRUCTION(check_effects_) {
-            pir::Effects expected = pir::Effects(readImmediate());
-            advanceImmediate();
-            pir::Effects actual = ctx->stopRecordingEffects();
-            ostack_push(ctx,
-                        expected.includes(actual) ? R_TrueValue : R_FalseValue);
+        INSTRUCTION(begin_sandbox_) {
+            Rboolean curVis = R_Visible;
+            R_bcstack_t* stackSize = R_BCNodeStackTop;
+            R_bcstack_t stackTop[STACK_PROTECTION];
+            for (unsigned i = 0; i < STACK_PROTECTION; i++)
+                stackTop[i] = (R_BCNodeStackTop - STACK_PROTECTION)[i];
+            ctx->startSandbox();
+            try {
+                ostack_push(ctx, R_FalseValue);
+                return evalRirCode(c, ctx, env, callCtxt, pc, localsBase,
+                                   cache);
+            } catch (int err) {
+                // longjmped out of sandbox
+                // Restores visibility, so it isn't considered an "effect"
+                R_Visible = curVis;
+                // Restore the stack
+                ostack_popn(ctx, (unsigned)(R_BCNodeStackTop - stackSize));
+                for (unsigned i = 0; i < STACK_PROTECTION; i++)
+                    (R_BCNodeStackTop - STACK_PROTECTION)[i] = stackTop[i];
+                // Signal sandbox fail
+                ostack_push(ctx, R_TrueValue);
+            }
+            NEXT();
+        }
+
+        INSTRUCTION(end_sandbox_) {
+            ctx->stopSandbox();
             NEXT();
         }
 

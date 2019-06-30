@@ -571,7 +571,7 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
         // not local to the current environment.
 
         if (Compiler::profile)
-            cs << BC::startRecordingEffects();
+            cs << BC::startRecordingPure();
 
         if (superAssign) {
             cs << BC::ldvarSuper(target);
@@ -585,7 +585,7 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
 
         if (Compiler::profile) {
             cs << BC::recordType();
-            cs << BC::recordEffects();
+            cs << BC::recordPure();
         }
 
         // And index
@@ -1092,14 +1092,14 @@ void compileGetvar(CompilerContext& ctx, SEXP name, bool needsVisible = true) {
         cs << BC::push(R_MissingArg);
     } else {
         if (Compiler::profile)
-            cs << BC::startRecordingEffects();
+            cs << BC::startRecordingPure();
         if (ctx.code.top()->isCached(name))
             cs << BC::ldvarCached(name, ctx.code.top()->cacheSlotFor(name));
         else
             cs << BC::ldvar(name);
         if (Compiler::profile) {
             cs << BC::recordType();
-            cs << BC::recordEffects();
+            cs << BC::recordPure();
         }
     }
     if (needsVisible)

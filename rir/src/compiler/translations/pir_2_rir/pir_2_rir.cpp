@@ -900,12 +900,16 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                     cb.add(BC::br(bbLabels[falseBranch]));
                 }
                 // This is the end of this BB
+                if (instr->isSandboxed())
+                    cb.add(BC::endSandbox());
                 return;
             }
 
             case Tag::Return: {
                 cb.add(BC::ret());
                 // end of this BB
+                if (instr->isSandboxed())
+                    cb.add(BC::endSandbox());
                 return;
             }
 
@@ -930,8 +934,13 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 
                 cb.add(BC::deopt(store));
                 // deopt is exit
+                assert(!instr->isSandboxed()); // This is already deopt
                 return;
             }
+
+            case Tag::BeginSandbox:
+                cb.add(BC::beginSandbox());
+                break;
 
             // Invalid, should've been lowered away
             case Tag::FrameState:
@@ -956,6 +965,9 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 break;
             }
             }
+
+            if (instr->isSandboxed())
+                cb.add(BC::endSandbox());
 
             if (instr->minReferenceCount() < 2 && needsSetShared.count(instr))
                 cb.add(BC::setShared());
@@ -1018,6 +1030,22 @@ static bool coinFlip() {
 };
 
 void Pir2Rir::lower(Code* code) {
+    Visitor::run(code->entry, [&](BB* bb) {
+        auto it = bb->begin();
+        while (it != bb->end()) {
+            if (auto cp = (*it)->sandboxCheckpoint()) {
+                BeginSandbox* bsa = new BeginSandbox();
+                it = bb->insert(it, bsa);
+                it++;
+                (*it)->lowerSandbox();
+                it++;
+                Assume* a = new Assume(bsa, cp);
+                a->assumeTrue = false;
+                it = bb->insert(it, a);
+            }
+            it++;
+        }
+    });
 
     Visitor::runPostChange(code->entry, [&](BB* bb) {
         auto it = bb->begin();
@@ -1079,7 +1107,6 @@ void Pir2Rir::lower(Code* code) {
                 // than trusting the modified iterator.
                 break;
             }
-
             it = next;
         }
     });

@@ -186,9 +186,10 @@ static Sources hasSources(Opcode bc) {
     case Opcode::ldvar_noforce_stubbed_:
     case Opcode::stvar_stubbed_:
     case Opcode::assert_type_:
-    case Opcode::start_recording_effects_:
-    case Opcode::record_effects_:
-    case Opcode::check_effects_:
+    case Opcode::start_recording_pure_:
+    case Opcode::record_pure_:
+    case Opcode::begin_sandbox_:
+    case Opcode::end_sandbox_:
         return Sources::NotNeeded;
 
     case Opcode::ldloc_:

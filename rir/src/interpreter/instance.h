@@ -62,29 +62,60 @@ struct InterpreterInstance {
     ExprCompiler exprCompiler;
     ClosureCompiler closureCompiler;
     ClosureOptimizer closureOptimizer;
-    std::stack<pir::Effects> effectsStack;
+    std::stack<bool> pureStack;
+    unsigned sandboxes;
+    unsigned pureStackSnapshot;
+    unsigned sandboxedPromises;
 
-    void startRecordingEffects() {
-        effectsStack.push(pir::Effects::None());
-        assert(!effectsStack.empty());
-    }
+    void startRecordingPure() { pureStack.push(true); }
 
-    pir::Effects stopRecordingEffects() {
-        assert(!effectsStack.empty());
-        pir::Effects top = effectsStack.top();
-        effectsStack.pop();
-        recordEffects(top);
+    bool stopRecordingPure() {
+        assert(!pureStack.empty());
+        bool top = pureStack.top();
+        pureStack.pop();
+        // Effects still apply to outer frame
+        recordPure(top);
         return top;
     }
 
-    void recordEffect(pir::Effect effect) {
-        if (!effectsStack.empty())
-            effectsStack.top().set(effect);
+    RIR_INLINE void recordPure(bool isPure) {
+        if (!isPure) {
+            if (sandboxes > 0) {
+#define DEBUG_SANDBOX
+#ifdef DEBUG_SANDBOX
+                std::cout << "** Impure operation, exiting sandbox\n";
+#endif
+                sandboxes = 0;
+                // Stop nested records
+                while (pureStack.size() > pureStackSnapshot) {
+                    pureStack.pop();
+                }
+                // And reset sandboxed promises
+                while (sandboxedPromises > 0) {
+                    SET_PRSEEN(R_PendingPromises->promise, 0);
+                    R_PendingPromises = R_PendingPromises->next;
+                    sandboxedPromises--;
+                }
+                throw 1;
+            }
+            if (!pureStack.empty())
+                pureStack.top() = false;
+        }
     }
 
-    void recordEffects(pir::Effects effects) {
-        if (!effectsStack.empty())
-            effectsStack.top() = effectsStack.top() | effects;
+    // Initially returns false. Before an impure operation, will longjmp back
+    // and return true.
+    void startSandbox() {
+        sandboxes++;
+        if (sandboxes == 1)
+            pureStackSnapshot = pureStack.size();
+    }
+
+    void stopSandbox() {
+        if (sandboxes > 0)
+            sandboxes--;
+        if (sandboxes == 0)
+            assert(sandboxedPromises == 0);
     }
 };
 
@@ -119,6 +150,11 @@ RIR_INLINE void rl_append(ResizeableList* l, SEXP val, SEXP parent,
     rl_setLength(l, i + 1);
     SET_VECTOR_ELT(l->list, i, val);
 }
+
+// Lowest stack frame which can be modified in sandbox.
+// This is so we don't need to copy as much stack.
+// TODO enforce
+static const unsigned STACK_PROTECTION = 3;
 
 #define ostack_length(c) (R_BCNodeStackTop - R_BCNodeStackBase)
 

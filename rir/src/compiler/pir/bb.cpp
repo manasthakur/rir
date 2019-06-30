@@ -103,6 +103,7 @@ void BB::append(Instruction* i) {
 }
 
 BB::Instrs::iterator BB::remove(Instrs::iterator it) {
+    (*it)->cleanup();
     deleted.push_back(*it);
     return instrs.erase(it);
 }
@@ -143,6 +144,7 @@ BB* BB::cloneInstrs(BB* src, unsigned id, Code* target) {
 }
 
 void BB::replace(Instrs::iterator it, Instruction* i) {
+    (*it)->cleanup();
     deleted.push_back(*it);
     *it = i;
     i->bb_ = this;
@@ -167,8 +169,9 @@ void BB::gc() {
     dup.insert(deleted.begin(), deleted.end());
     assert(dup.size() == deleted.size());
 
-    for (auto i : deleted)
+    for (auto i : deleted) {
         delete i;
+    }
     deleted.clear();
 }
 

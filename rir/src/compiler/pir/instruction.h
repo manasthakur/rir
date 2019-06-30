@@ -2,6 +2,7 @@
 #define COMPILER_INSTRUCTION_H
 
 #include "R/r.h"
+#include "auxillary_values.h"
 #include "effects.h"
 #include "env.h"
 #include "instruction_list.h"
@@ -95,6 +96,8 @@ enum class VisibilityFlag : uint8_t {
     Unknown,
 };
 
+class Checkpoint;
+
 class Instruction : public Value {
   public:
     struct InstructionUID : public std::pair<unsigned, unsigned> {
@@ -108,9 +111,27 @@ class Instruction : public Value {
         : Value(t, tag), effects(effects), srcIdx(srcIdx) {}
 
     Effects effects;
+    bool isSandboxed_ = false;
+    Checkpoint* sandboxCheckpoint_ = NULL;
 
   public:
-    Effects effectFeedback = Effects::None();
+    bool hasPureFeedback = false;
+    bool pureFeedback = true;
+
+    bool isSandboxed() const { return isSandboxed_; }
+    Checkpoint* sandboxCheckpoint() { return sandboxCheckpoint_; }
+
+    void sandbox(Checkpoint* checkpoint) {
+        assert(!isSandboxed() && "already sandboxed");
+        isSandboxed_ = true;
+        sandboxCheckpoint_ = checkpoint;
+        effects.set(Effect::TriggerDeopt);
+    }
+
+    void lowerSandbox() {
+        assert(sandboxCheckpoint_ != NULL);
+        sandboxCheckpoint_ = NULL;
+    }
 
     void clearEffects() { effects.reset(); }
     void clearVisibility() { effects.reset(Effect::Visibility); }
@@ -234,6 +255,7 @@ class Instruction : public Value {
     virtual const char* name() const { return tagToStr(tag); }
 
     Instruction* hasSingleUse();
+    void cleanup();
     void eraseAndRemove();
     void replaceUsesWith(Value* val);
     void replaceUsesAndSwapWith(Instruction* val,
@@ -251,6 +273,7 @@ class Instruction : public Value {
     virtual void printGraphArgs(std::ostream& out, bool tty) const;
     virtual void printGraphBranches(std::ostream& out, size_t bbId) const;
     virtual void printEnv(std::ostream& out, bool tty) const;
+    void printSandbox(std::ostream& out, bool tty) const;
     virtual void print(std::ostream& out, bool tty = false) const;
     void printGraph(std::ostream& out, bool tty = false) const;
     void printRef(std::ostream& out) const override final;
@@ -1872,6 +1895,11 @@ class ScheduledDeopt
     ScheduledDeopt() : VarLenInstruction(PirType::voyd()) {}
     void consumeFrameStates(Deopt* deopt);
     void printArgs(std::ostream& out, bool tty) const override;
+};
+
+class FLI(BeginSandbox, 0, Effects::None()) {
+  public:
+    BeginSandbox() : FixedLenInstruction(NativeType::test, {{}}, {{}}) {}
 };
 
 #undef FLI

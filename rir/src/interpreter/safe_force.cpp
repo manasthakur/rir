@@ -9,10 +9,6 @@
 
 // R imports
 extern "C" Rboolean R_Visible;
-typedef struct RPRSTACK {
-    SEXP promise;
-    struct RPRSTACK* next;
-} RPRSTACK;
 
 namespace rir {
 
@@ -94,7 +90,7 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
         res = rirEval_f(e, env);
         break;
     default:
-        ctx->recordEffects(pir::Effects::Any());
+        ctx->recordPure(pir::Effects::Any());
         res = Rf_eval(e, env);
         break;
     }
@@ -130,6 +126,8 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
     prstack.promise = e;
     prstack.next = R_PendingPromises;
     R_PendingPromises = &prstack;
+    if (ctx->sandboxes > 0)
+        ctx->sandboxedPromises++;
 
     // The original code is eval(PRCODE(e), PRENV(e))
     //
@@ -139,6 +137,8 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
        Also set the environment to R_NilValue to allow GC to
        reclaim the promise environment; this is also useful for
        fancy games with delayedAssign() */
+    if (ctx->sandboxes > 0)
+        ctx->sandboxedPromises--;
     R_PendingPromises = prstack.next;
     SET_PRSEEN(e, 0);
     SET_PRVALUE(e, val);
