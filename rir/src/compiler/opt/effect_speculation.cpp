@@ -22,7 +22,8 @@ void EffectSpeculation::apply(RirCompiler&, ClosureVersion* function,
         while (ip != bb->end()) {
             auto next = ip + 1;
             auto i = *ip;
-            if (Force::Cast(i) && i->hasPureFeedback && !i->isSandboxed()) {
+            if (Force::Cast(i) && i->effects.contains(Effect::Reflection) &&
+                i->hasPureFeedback && !i->isSandboxed()) {
                 if (auto cp = checkpoint.next(i)) {
                     i->sandbox(cp);
                 }
