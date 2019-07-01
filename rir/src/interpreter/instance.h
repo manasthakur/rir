@@ -63,9 +63,9 @@ struct InterpreterInstance {
     ClosureCompiler closureCompiler;
     ClosureOptimizer closureOptimizer;
     std::stack<bool> pureStack;
-    unsigned sandboxes;
-    unsigned pureStackSnapshot;
-    unsigned sandboxedPromises;
+    unsigned sandboxes = 0;
+    unsigned pureStackSnapshot = -1;
+    unsigned sandboxedPromises = 0;
 
     void startRecordingPure() { pureStack.push(true); }
 
