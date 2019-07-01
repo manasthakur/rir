@@ -1030,23 +1030,6 @@ static bool coinFlip() {
 };
 
 void Pir2Rir::lower(Code* code) {
-    Visitor::run(code->entry, [&](BB* bb) {
-        auto it = bb->begin();
-        while (it != bb->end()) {
-            if (auto cp = (*it)->sandboxCheckpoint()) {
-                BeginSandbox* bsa = new BeginSandbox();
-                it = bb->insert(it, bsa);
-                it++;
-                (*it)->lowerSandbox();
-                it++;
-                Assume* a = new Assume(bsa, cp);
-                a->assumeTrue = false;
-                it = bb->insert(it, a);
-            }
-            it++;
-        }
-    });
-
     Visitor::runPostChange(code->entry, [&](BB* bb) {
         auto it = bb->begin();
         while (it != bb->end()) {
@@ -1102,6 +1085,19 @@ void Pir2Rir::lower(Code* code) {
                 BBTransform::lowerExpect(
                     code, bb, it, condition, expect->assumeTrue,
                     expect->checkpoint()->bb()->falseBranch(), debugMessage);
+                // lowerExpect splits the bb from current position. There
+                // remains nothing to process. Breaking seems more robust
+                // than trusting the modified iterator.
+                break;
+            } else if (auto cp = (*it)->sandboxCheckpoint()) {
+                BeginSandbox* bsa = new BeginSandbox();
+                it = bb->insert(it, bsa);
+                it++;
+                (*it)->lowerSandbox();
+                it++;
+                it = bb->insert(it, new Nop());
+                BBTransform::lowerExpect(code, bb, it, bsa, false,
+                                         cp->bb()->falseBranch(), "");
                 // lowerExpect splits the bb from current position. There
                 // remains nothing to process. Breaking seems more robust
                 // than trusting the modified iterator.

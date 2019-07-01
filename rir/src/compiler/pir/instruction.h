@@ -119,7 +119,7 @@ class Instruction : public Value {
     bool pureFeedback = true;
 
     bool isSandboxed() const { return isSandboxed_; }
-    Checkpoint* sandboxCheckpoint() { return sandboxCheckpoint_; }
+    Checkpoint*& sandboxCheckpoint() { return sandboxCheckpoint_; }
 
     void sandbox(Checkpoint* checkpoint) {
         assert(!isSandboxed() && "already sandboxed");
