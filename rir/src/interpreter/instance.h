@@ -81,7 +81,7 @@ struct InterpreterInstance {
     RIR_INLINE void recordPure(bool isPure) {
         if (!isPure) {
             if (sandboxes > 0) {
-#define DEBUG_SANDBOX
+// #define DEBUG_SANDBOX
 #ifdef DEBUG_SANDBOX
                 std::cout << "** Impure operation, exiting sandbox\n";
 #endif
