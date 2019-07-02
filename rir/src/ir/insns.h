@@ -553,12 +553,12 @@ DEF_INSTR(endloop_, 0, 0, 0, true)
  * return_ :: return instruction. Non-local return instruction as opposed to
  * ret_.
  */
-DEF_INSTR(return_, 0, 1, 0, true)
+DEF_INSTR(return_, 0, 1, 0, false)
 
 /**
  * ret_:: terminates execution and pops result off object stack
  */
-DEF_INSTR(ret_, 0, 1, 0, true)
+DEF_INSTR(ret_, 0, 1, 0, false)
 
 /**
  * deopt_ :: jumps to the immediate bc location

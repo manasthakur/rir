@@ -1798,6 +1798,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             switch (TYPEOF(res)) {
             case CLOSXP:
+                // Note: JIT will not exit sandbox
                 jit(res, sym, ctx);
                 break;
             case SPECIALSXP:
