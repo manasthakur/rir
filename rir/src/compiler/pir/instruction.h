@@ -1904,6 +1904,11 @@ class FLI(BeginSandbox, 0, Effects::None()) {
     BeginSandbox() : FixedLenInstruction(NativeType::test, {{}}, {{}}) {}
 };
 
+class FLI(EndSandbox, 0, Effects::None()) {
+  public:
+    EndSandbox() : FixedLenInstruction(PirType::voyd(), {{}}, {{}}) {}
+};
+
 #undef FLI
 #undef VLI
 #undef FLIE

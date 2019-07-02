@@ -3882,23 +3882,23 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
         INSTRUCTION(begin_sandbox_) {
             Rboolean curVis = R_Visible;
-            R_bcstack_t* stackSize = R_BCNodeStackTop;
-            R_bcstack_t stackTop[STACK_PROTECTION];
+            size_t stackSize = ostack_length(ctx);
+            SEXP stackTop[STACK_PROTECTION];
             for (unsigned i = 0; i < STACK_PROTECTION; i++)
-                stackTop[i] = (R_BCNodeStackTop - STACK_PROTECTION)[i];
+                stackTop[i] = ostack_at(ctx, STACK_PROTECTION - i - 1);
             ctx->startSandbox();
             try {
                 ostack_push(ctx, R_FalseValue);
                 return evalRirCode(c, ctx, env, callCtxt, pc, localsBase,
                                    cache);
             } catch (int err) {
-                // longjmped out of sandbox
+                // undo sandboxed instructions
                 // Restores visibility, so it isn't considered an "effect"
                 R_Visible = curVis;
                 // Restore the stack
-                ostack_popn(ctx, (unsigned)(R_BCNodeStackTop - stackSize));
+                ostack_popn(ctx, ostack_length(ctx) - stackSize);
                 for (unsigned i = 0; i < STACK_PROTECTION; i++)
-                    (R_BCNodeStackTop - STACK_PROTECTION)[i] = stackTop[i];
+                    ostack_set(ctx, STACK_PROTECTION - i - 1, stackTop[i]);
                 // Signal sandbox fail
                 ostack_push(ctx, R_TrueValue);
             }

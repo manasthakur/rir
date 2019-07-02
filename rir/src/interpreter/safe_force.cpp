@@ -90,7 +90,7 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
         res = rirEval_f(e, env);
         break;
     default:
-        ctx->recordPure(pir::Effects::Any());
+        ctx->recordPure(false);
         res = Rf_eval(e, env);
         break;
     }
