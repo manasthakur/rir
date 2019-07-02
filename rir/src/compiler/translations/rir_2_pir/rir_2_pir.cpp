@@ -323,13 +323,17 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         break;
     }
 
-    case Opcode::record_pure_: {
-        Instruction* target = Instruction::Cast(top());
-        assert(target != NULL);
-        target->hasPureFeedback = true;
-        target->pureFeedback &= bc.immediate.i;
+    case Opcode::start_recording_pure_:
+        insert.sandbox.startSandboxing();
         break;
-    }
+
+    case Opcode::record_pure_:
+        for (auto target : insert.sandbox.sandboxed()) {
+            target->hasPureFeedback = true;
+            target->pureFeedback &= bc.immediate.i;
+        }
+        insert.sandbox.stopSandboxing();
+        break;
 
     case Opcode::named_call_implicit_:
     case Opcode::call_implicit_: {
@@ -803,7 +807,6 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
 
     // Silently ignored
     case Opcode::clear_binding_cache_:
-    case Opcode::start_recording_pure_:
     // TODO implement!
     case Opcode::isfun_:
         break;

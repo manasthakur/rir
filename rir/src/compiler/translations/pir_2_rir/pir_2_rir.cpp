@@ -1093,8 +1093,10 @@ void Pir2Rir::lower(Code* code) {
                 BeginSandbox* bsa = new BeginSandbox();
                 it = bb->insert(it, bsa);
                 it++;
-                (*it)->lowerSandbox();
-                it++;
+                while ((*it)->sandboxCheckpoint() == cp) {
+                    (*it)->lowerSandbox();
+                    it++;
+                }
                 it = bb->insert(it, new Nop());
                 BBTransform::lowerExpect(code, bb, it, bsa, false,
                                          cp->bb()->falseBranch(), "");

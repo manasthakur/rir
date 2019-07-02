@@ -38,7 +38,7 @@ SEXP safeForcePromise(SEXP e) {
 }
 
 static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
-//#define DEBUG_EVAL
+// #define DEBUG_EVAL
 #ifdef DEBUG_EVAL
     std::cout << "Custom eval of " << TYPEOF(e) << ": ";
     Rf_PrintValue(e);

@@ -125,7 +125,9 @@ class Instruction : public Value {
         assert(!isSandboxed() && "already sandboxed");
         isSandboxed_ = true;
         sandboxCheckpoint_ = checkpoint;
-        effects.set(Effect::TriggerDeopt);
+        // May still have visibility, now can deopt, everything else breaks the
+        // sandbox
+        effects = (effects & Effect::Visibility) | Effect::TriggerDeopt;
     }
 
     void lowerSandbox() {

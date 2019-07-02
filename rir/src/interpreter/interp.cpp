@@ -28,7 +28,7 @@ extern Rboolean R_Visible;
 
 namespace rir {
 
-//#define PRINT_INTERP
+#define PRINT_INTERP
 #ifdef PRINT_INTERP
 static void printInterp(Opcode* pc, Code* c) {
     BC bc = BC::decode(pc, c);
