@@ -7,9 +7,6 @@
 
 #include <assert.h>
 
-// R imports
-extern "C" Rboolean R_Visible;
-
 namespace rir {
 
 SEXP safeEval(SEXP e, SEXP rho) {
@@ -91,6 +88,10 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
         break;
     default:
         ctx->recordPure(false);
+        if (ctx->brokeSandbox) {
+            res = NULL;
+            break;
+        }
         res = Rf_eval(e, env);
         break;
     }
@@ -126,8 +127,7 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
     prstack.promise = e;
     prstack.next = R_PendingPromises;
     R_PendingPromises = &prstack;
-    if (ctx->sandboxes > 0)
-        ctx->sandboxedPromises++;
+    ctx->enterPromise();
 
     // The original code is eval(PRCODE(e), PRENV(e))
     //
@@ -137,10 +137,11 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
        Also set the environment to R_NilValue to allow GC to
        reclaim the promise environment; this is also useful for
        fancy games with delayedAssign() */
-    if (ctx->sandboxes > 0)
-        ctx->sandboxedPromises--;
+    ctx->exitPromise();
     R_PendingPromises = prstack.next;
     SET_PRSEEN(e, 0);
+    if (ctx->brokeSandbox)
+        return NULL;
     SET_PRVALUE(e, val);
     ENSURE_NAMEDMAX(val);
     SET_PRENV(e, R_NilValue);

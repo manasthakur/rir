@@ -357,8 +357,8 @@ DEF_INSTR(asbool_, 0, 1, 1, true)
  *                   or floors if real, 0 or 1 if logical, throws an NA error if
  *                   another type. For simple ranges.
  */
-DEF_INSTR(ceil_, 0, 1, 1, true)
-DEF_INSTR(floor_, 0, 1, 1, true)
+DEF_INSTR(ceil_, 0, 1, 1, false)
+DEF_INSTR(floor_, 0, 1, 1, false)
 
 /**
  * asast_:: pop a promise off the object stack, push its AST on object stack

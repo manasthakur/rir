@@ -23,12 +23,11 @@
 
 extern "C" {
 extern SEXP Rf_NewEnvironment(SEXP, SEXP, SEXP);
-extern Rboolean R_Visible;
 }
 
 namespace rir {
 
-#define PRINT_INTERP
+// #define PRINT_INTERP
 #ifdef PRINT_INTERP
 static void printInterp(Opcode* pc, Code* c) {
     BC bc = BC::decode(pc, c);
@@ -52,58 +51,88 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
     return src_pool_at(ctx, sidx);
 }
 
+#define RAISE_WARNING(ctx, ...)                                                \
+    raiseWarning(ctx, __VA_ARGS__);                                            \
+    if (ctx->brokeSandbox)                                                     \
+    NEXT()
+
+#define RAISE_WARNINGCALL(ctx, ...)                                            \
+    raiseWarningCall(ctx, __VA_ARGS__);                                        \
+    if (ctx->brokeSandbox)                                                     \
+    NEXT()
+
+#define RAISE_ERROR(ctx, ...)                                                  \
+    raiseError(ctx, __VA_ARGS__);                                              \
+    if (ctx->brokeSandbox)                                                     \
+    NEXT()
+
+#define RAISE_ERRORCALL(ctx, ...)                                              \
+    raiseErrorCall(ctx, __VA_ARGS__);                                          \
+    if (ctx->brokeSandbox)                                                     \
+    NEXT()
+
+#define BREAK_SANDBOX(ctx)                                                     \
+    ctx->recordPure(false);                                                    \
+    if (ctx->brokeSandbox)                                                     \
+    return
+
 static RIR_INLINE void raiseWarningCall(InterpreterInstance* ctx, SEXP src,
                                         const char* msg) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_warningcall(src, msg);
 }
 
 template <typename... Args>
 static RIR_INLINE void raiseWarningCall(InterpreterInstance* ctx, SEXP src,
                                         const char* msg, Args... args) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_warningcall(src, msg, args...);
 }
 
 static RIR_INLINE void raiseWarning(InterpreterInstance* ctx, const char* msg) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_warning(msg);
 }
 
 template <typename... Args>
 static RIR_INLINE void raiseWarning(InterpreterInstance* ctx, const char* msg,
                                     Args... args) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_warning(msg, args...);
 }
 
 static RIR_INLINE void raiseErrorCall(InterpreterInstance* ctx, SEXP src,
                                       const char* msg) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_errorcall(src, msg);
 }
 
 template <typename... Args>
 static RIR_INLINE void raiseErrorCall(InterpreterInstance* ctx, SEXP src,
                                       const char* msg, Args... args) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_errorcall(src, msg, args...);
 }
 
 static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_error(msg);
 }
 
 template <typename... Args>
 static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg,
                                   Args... args) {
-    ctx->recordPure(false);
+    BREAK_SANDBOX(ctx);
     Rf_error(msg, args...);
 }
 
 #define PC_BOUNDSCHECK(pc, c)                                                  \
     SLOWASSERT((pc) >= (c)->code() && (pc) < (c)->endCode());
+
+#define HANDLE_SANDBOX()                                                       \
+    ctx->recordPure(BC::isPure(*pc));                                          \
+    if (ctx->brokeSandbox)                                                     \
+    pc = ctx->beforeSandbox
 
 #ifdef THREADED_CODE
 #define BEGIN_MACHINE NEXT();
@@ -113,7 +142,7 @@ static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg,
 #define NEXT()                                                                 \
     (__extension__({                                                           \
         printInterp(pc, c);                                                    \
-        ctx->recordPure(BC::isPure(*pc));                                      \
+        HANDLE_SANDBOX();                                                      \
         goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
     }))
 #define LASTOP                                                                 \
@@ -121,7 +150,7 @@ static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg,
 #else
 #define NEXT()                                                                 \
     (__extension__({                                                           \
-        ctx->recordPure(BC::isPure(*pc));                                      \
+        HANDLE_SANDBOX();                                                      \
         goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
     }))
 #define LASTOP                                                                 \
@@ -129,14 +158,14 @@ static RIR_INLINE void raiseError(InterpreterInstance* ctx, const char* msg,
 #endif
 #else
 #define BEGIN_MACHINE                                                          \
-    ctx->recordPure(BC::isPure(*pc));                                          \
+    HANDLE_SANDBOX();                                                          \
     loop:                                                                      \
     switch (advanceOpcode())
 #define INSTRUCTION(name)                                                      \
     case Opcode::name:                                                         \
         /* debug(c, pc, #name, ostack_length(ctx) - bp, ctx); */
 #define NEXT()                                                                 \
-    ctx->recordPure(BC::isPure(*pc));                                          \
+    HANDLE_SANDBOX();                                                          \
     goto loop
 #define LASTOP                                                                 \
     default:                                                                   \
@@ -185,6 +214,8 @@ static RIR_INLINE SEXP promiseValue(SEXP promise, InterpreterInstance* ctx) {
         return promise;
     } else {
         SEXP res = rirForcePromise(promise, ctx);
+        if (ctx->brokeSandbox)
+            return NULL;
         assert(TYPEOF(res) != PROMSXP && "promise returned promise");
         return res;
     }
@@ -969,6 +1000,7 @@ static SEXP doCall(CallContext& call, InterpreterInstance* ctx) {
     }
     default:
         raiseError(ctx, "Invalid Callee");
+        break;
     };
     return R_NilValue;
 }
@@ -1077,7 +1109,7 @@ static SEXPREC createFakeCONS(SEXP cdr) {
         if (naflag) {                                                          \
             PROTECT(ans);                                                      \
             SEXP call = getSrcForCall(c, pc - 1, ctx);                         \
-            raiseWarningCall(ctx, call, INTEGER_OVERFLOW_WARNING);             \
+            RAISE_WARNINGCALL(ctx, call, INTEGER_OVERFLOW_WARNING);            \
             UNPROTECT(1);                                                      \
         }                                                                      \
     } while (0)
@@ -1372,6 +1404,8 @@ RIR_INLINE static void castInt(bool ceil_, Code* c, Opcode* pc,
         if (XLENGTH(val) == 0) {
             raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx),
                            "argument of length 0");
+            if (ctx->brokeSandbox)
+                return;
             x = NA_INTEGER;
             isNaOrNan = false;
         } else {
@@ -1416,6 +1450,8 @@ RIR_INLINE static void castInt(bool ceil_, Code* c, Opcode* pc,
                 raiseWarningCall(ctx, getSrcAt(c, pc - 1, ctx),
                                  "numerical expression has multiple "
                                  "elements: only the first used");
+                if (ctx->brokeSandbox)
+                    return;
             }
         }
     } else { // Everything else
@@ -1424,6 +1460,8 @@ RIR_INLINE static void castInt(bool ceil_, Code* c, Opcode* pc,
     }
     if (isNaOrNan) {
         raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx), "NA/NaN argument");
+        if (ctx->brokeSandbox)
+            return;
     }
     SEXP res = Rf_allocVector(INTSXP, 1);
     *INTEGER(res) = x;
@@ -1806,7 +1844,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 // special and builtin functions are ok
                 break;
             default:
-                raiseError(ctx, "attempt to apply non-function");
+                RAISE_ERROR(ctx, "attempt to apply non-function");
             }
             ostack_push(ctx, res);
             NEXT();
@@ -1828,17 +1866,20 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
-            if (TYPEOF(res) == PROMSXP)
+            if (TYPEOF(res) == PROMSXP) {
                 res = promiseValue(res, ctx);
+                if (ctx->brokeSandbox)
+                    NEXT();
+            }
 
             if (res != R_NilValue) {
                 if (isLocal)
@@ -1869,17 +1910,19 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
             if (TYPEOF(res) == PROMSXP) {
                 res = promiseValue(res, ctx);
+                if (ctx->brokeSandbox)
+                    NEXT();
             }
 
             if (res != R_NilValue) {
@@ -1903,11 +1946,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             auto res = le->getArg(pos);
 
             if (res == R_UnboundValue) {
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(Pool::get(le->names[pos]))));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(Pool::get(le->names[pos]))));
             } else if (res == R_MissingArg) {
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(Pool::get(le->names[pos]))));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(Pool::get(le->names[pos]))));
             }
 
             if (res != R_NilValue)
@@ -1923,14 +1966,16 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, env);
 
             if (res == R_UnboundValue) {
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             } else if (TYPEOF(res) == PROMSXP) {
-                // if promise, evaluate & return
+                // if promise, evaluate and return
                 res = promiseValue(res, ctx);
+                if (ctx->brokeSandbox)
+                    NEXT();
             }
 
             if (res != R_NilValue)
@@ -1949,17 +1994,20 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
-            if (TYPEOF(res) == PROMSXP)
+            if (TYPEOF(res) == PROMSXP) {
                 res = promiseValue(res, ctx);
+                if (ctx->brokeSandbox)
+                    NEXT();
+            }
 
             if (res != R_NilValue)
                 ENSURE_NAMED(res);
@@ -1974,11 +2022,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, env);
 
             if (res == R_UnboundValue) {
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             if (res != R_NilValue)
@@ -1997,12 +2045,12 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 
             if (res == R_UnboundValue) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
                 SEXP sym = cp_pool_at(ctx, id);
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             if (res != R_NilValue)
@@ -2018,16 +2066,19 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, ENCLOS(env));
 
             if (res == R_UnboundValue) {
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
-            if (TYPEOF(res) == PROMSXP)
+            if (TYPEOF(res) == PROMSXP) {
                 res = promiseValue(res, ctx);
+                if (ctx->brokeSandbox)
+                    return NULL;
+            }
 
             if (res != R_NilValue)
                 ENSURE_NAMED(res);
@@ -2042,11 +2093,11 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_findVar(sym, ENCLOS(env));
 
             if (res == R_UnboundValue) {
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             if (res != R_NilValue)
@@ -2062,16 +2113,19 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             res = Rf_ddfindVar(sym, env);
 
             if (res == R_UnboundValue) {
-                raiseError(ctx, "object \"%s\" not found",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "object \"%s\" not found",
+                            CHAR(PRINTNAME(sym)));
             } else if (res == R_MissingArg) {
-                raiseError(ctx, "argument \"%s\" is missing, with no default",
-                           CHAR(PRINTNAME(sym)));
+                RAISE_ERROR(ctx, "argument \"%s\" is missing, with no default",
+                            CHAR(PRINTNAME(sym)));
             }
 
             // if promise, evaluate & return
-            if (TYPEOF(res) == PROMSXP)
+            if (TYPEOF(res) == PROMSXP) {
                 res = promiseValue(res, ctx);
+                if (ctx->brokeSandbox)
+                    NEXT();
+            }
 
             if (res != R_NilValue)
                 ENSURE_NAMED(res);
@@ -2447,7 +2501,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 // TODO for now - we might be fancier here later
                 break;
             default:
-                raiseError(ctx, "attempt to apply non-function");
+                RAISE_ERROR(ctx, "attempt to apply non-function");
             }
             NEXT();
         }
@@ -2467,7 +2521,10 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                 // If the promise is already evaluated then push the value
                 // inside the promise onto the stack, otherwise push the value
                 // from forcing the promise
-                ostack_push(ctx, promiseValue(val, ctx));
+                SEXP res = promiseValue(val, ctx);
+                if (ctx->brokeSandbox)
+                    NEXT();
+                ostack_push(ctx, res);
             }
             NEXT();
         }
@@ -2922,7 +2979,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             SEXP val = ostack_top(ctx);
             int cond = NA_LOGICAL;
             if (XLENGTH(val) > 1)
-                raiseWarningCall(
+                RAISE_WARNINGCALL(
                     ctx, getSrcAt(c, pc - 1, ctx),
                     "the condition has length > 1 and only the first "
                     "element will be used");
@@ -2948,7 +3005,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                                ? ("missing value where TRUE/FALSE needed")
                                : ("argument is not interpretable as logical"))
                         : ("argument is of length zero");
-                raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx), msg);
+                RAISE_ERRORCALL(ctx, getSrcAt(c, pc - 1, ctx), msg);
             }
 
             ostack_pop(ctx);
@@ -3044,8 +3101,8 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             assert(env);
             SEXP val = R_findVarLocInFrame(env, sym).cell;
             if (val == NULL)
-                raiseErrorCall(ctx, getSrcAt(c, pc - 1, ctx),
-                               "'missing' can only be used for arguments");
+                RAISE_ERRORCALL(ctx, getSrcAt(c, pc - 1, ctx),
+                                "'missing' can only be used for arguments");
 
             if (MISSING(val) || CAR(val) == R_MissingArg) {
                 ostack_push(ctx, R_TrueValue);
@@ -3073,7 +3130,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
         INSTRUCTION(check_missing_) {
             SEXP val = ostack_top(ctx);
             if (val == R_MissingArg)
-                raiseError(ctx, "argument is missing, with no default");
+                RAISE_ERROR(ctx, "argument is missing, with no default");
             NEXT();
         }
 
@@ -3582,7 +3639,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             advanceImmediate();
             advanceImmediate();
             if (res != Rf_findFun(sym, env))
-                raiseError(ctx, "Invalid Callee");
+                RAISE_ERROR(ctx, "Invalid Callee");
             NEXT();
         }
 
@@ -3772,7 +3829,7 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
             } else if (Rf_isList(seq) || isNull(seq)) {
                 INTEGER(value)[0] = Rf_length(seq);
             } else {
-                raiseErrorCall(ctx, R_NilValue, "invalid for() loop sequence");
+                RAISE_ERRORCALL(ctx, R_NilValue, "invalid for() loop sequence");
             }
             // TODO: Even when the for loop sequence is an object, R won't
             // dispatch on it. Since in RIR we use the normals extract2_1
@@ -3882,26 +3939,30 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
         }
 
         INSTRUCTION(begin_sandbox_) {
-            Rboolean curVis = R_Visible;
-            size_t stackSize = ostack_length(ctx);
-            SEXP stackTop[STACK_PROTECTION];
-            for (unsigned i = 0; i < STACK_PROTECTION; i++)
-                stackTop[i] = ostack_at(ctx, STACK_PROTECTION - i - 1);
-            ctx->startSandbox();
-            try {
+            if (ctx->brokeSandbox) {
+#define DEBUG_SANDBOX
+#ifdef DEBUG_SANDBOX
+                std::cout << "** Impure operation, exiting sandbox\n";
+#endif
+                // We tried to sandbox and failed
+                if (ctx->sandboxInPromise()) {
+                    // We're in a promise
+#ifdef DEBUG_SANDBOX
+                    std::cout << "   Exit promise\n";
+#endif
+                    return NULL;
+                } else {
+                    // We're in sandboxed environment
+#ifdef DEBUG_SANDBOX
+                    std::cout << "   Exit local environment\n";
+#endif
+                    ctx->undoSandbox();
+                    ostack_push(ctx, R_TrueValue);
+                }
+            } else {
+                // actually begin sandbox
+                ctx->startSandbox(pc - 1); // pc - BC::size(BC::beginSandbox())
                 ostack_push(ctx, R_FalseValue);
-                return evalRirCode(c, ctx, env, callCtxt, pc, localsBase,
-                                   cache);
-            } catch (int err) {
-                // undo sandboxed instructions
-                // Restores visibility, so it isn't considered an "effect"
-                R_Visible = curVis;
-                // Restore the stack
-                ostack_popn(ctx, ostack_length(ctx) - stackSize);
-                for (unsigned i = 0; i < STACK_PROTECTION; i++)
-                    ostack_set(ctx, STACK_PROTECTION - i - 1, stackTop[i]);
-                // Signal sandbox fail
-                ostack_push(ctx, R_TrueValue);
             }
             NEXT();
         }

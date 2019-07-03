@@ -11,6 +11,7 @@
 // Maximum valid entry for a CodeObject offset/idx entry
 #define MAX_ARG_IDX ((unsigned)-3)
 
+extern "C" Rboolean R_Visible;
 const static uint32_t NO_DEOPT_INFO = (uint32_t)-1;
 
 namespace rir {
