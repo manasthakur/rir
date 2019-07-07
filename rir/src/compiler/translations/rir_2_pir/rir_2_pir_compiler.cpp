@@ -203,7 +203,8 @@ void Rir2PirCompiler::optimizeModule() {
 #ifdef FULLVERIFIER
                 Verify::apply(v, true);
 #else
-#ifdef ENABLE_SLOWASSERT
+#ifndef ENABLE_SLOWASSERT
+                logger.flush();
                 Verify::apply(v);
 #endif
 #endif

@@ -188,8 +188,7 @@ static Sources hasSources(Opcode bc) {
     case Opcode::assert_type_:
     case Opcode::start_recording_pure_:
     case Opcode::record_pure_:
-    case Opcode::begin_sandbox_:
-    case Opcode::end_sandbox_:
+    case Opcode::force_sb_:
         return Sources::NotNeeded;
 
     case Opcode::ldloc_:

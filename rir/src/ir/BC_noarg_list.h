@@ -70,8 +70,7 @@
     V(NESTED, isstubenv, isstubenv)                                            \
     V(NESTED, return_, return )                                                \
     V(NESTED, startRecordingPure, start_recording_pure)                        \
-    V(NESTED, beginSandbox, begin_sandbox)                                     \
-    V(Nested, endSandbox, end_sandbox)
+    V(NESTED, forceSb, force_sb)
 
 #undef V_SIMPLE_INSTRUCTION
 

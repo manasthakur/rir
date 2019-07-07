@@ -382,7 +382,18 @@ void ForceDominance::apply(RirCompiler&, ClosureVersion* cls,
             auto ip = bb->begin();
             while (ip != bb->end()) {
                 auto next = ip + 1;
-                if (auto f = Force::Cast(*ip)) {
+                // Remove sandbox if we want to inline the force
+                if (BeginSandbox::Cast(*ip)) {
+                    if (auto f = Force::Cast(*next)) {
+                        if (result.isDominatingForce(f)) {
+                            next = bb->remove(ip);
+                            assert(EndSandbox::Cast(*(next + 1)));
+                            bb->remove(*(next + 1));
+                            assert(Assume::Cast(*(next + 1)));
+                            bb->remove(*(next + 1));
+                        }
+                    }
+                } else if (auto f = Force::Cast(*ip)) {
                     if (result.isDominatingForce(f))
                         f->strict = true;
 

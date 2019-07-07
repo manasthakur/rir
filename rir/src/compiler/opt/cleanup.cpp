@@ -128,7 +128,11 @@ class TheCleanup {
                         removed = true;
                         next = bb->remove(ip);
                     }
-                }
+                } /*else if (BeginSandbox::Cast(i) && EndSandbox::Cast(*next)) {
+                     removed = true;
+                     next = bb->remove(ip);
+                     next = bb->remove(ip);
+                 }*/
 
                 if (!removed) {
                     i->updateType();

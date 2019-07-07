@@ -70,6 +70,16 @@ class TheVerifier {
     }
 
     void verify(BB* bb, bool inPromise) {
+        for (auto it = bb->begin(); it != bb->end(); it++) {
+            if (BeginSandbox::Cast(*it)) {
+                if (!EndSandbox::Cast(*(it + 1)) &&
+                    !(Force::Cast(*(it + 1)) && EndSandbox::Cast(*(it + 2)))) {
+                    std::cerr << "Extra instructions in sandbox\n";
+                    ok = false;
+                }
+            }
+        }
+
         for (auto i : *bb) {
             if (FrameState::Cast(i) && inPromise) {
                 std::cerr << "Framestate in promise!\n";

@@ -159,12 +159,12 @@ DEF_INSTR(stvar_super_, 1, 1, 0, false)
 /**
  * stloc_:: store top of stack to local variable
  */
-DEF_INSTR(stloc_, 1, 1, 0, false)
+DEF_INSTR(stloc_, 1, 1, 0, true)
 
 /**
  * movloc_:: copy one local into another
  */
-DEF_INSTR(movloc_, 2, 0, 0, false)
+DEF_INSTR(movloc_, 2, 0, 0, true)
 
 /**
  * call_implicit_:: Takes a list of code objects, which represent the arguments,
@@ -584,16 +584,13 @@ DEF_INSTR(start_recording_pure_, 0, 0, 0, true)
 DEF_INSTR(record_pure_, 1, 0, 0, true)
 
 /*
- * will stop running code and push true if an impure function is reached
- * within the sandbox. Otherwise pushes false. If these are nested sandboxes,
- * jumps to the outer sandbox on failure
+ * The following instructions deal with sandboxed execution. Sandboxed
+ * instructions behave equivalent to regular instructions, except they don't
+ * allow certain effects. Instead, if an effect would be executed, they push an
+ * extra "false", signalling that the sandbox was "broken". Otherwise they push
+ * "true".
  */
-DEF_INSTR(begin_sandbox_, 0, 0, 1, true)
-
-/**
- * ends the sandbox, so unless there's an outer sandbox, impure code can be run
- */
-DEF_INSTR(end_sandbox_, 0, 0, 0, true)
+DEF_INSTR(force_sb_, 0, 1, 2, true)
 
 DEF_INSTR(int3_, 0, 0, 0, true)
 DEF_INSTR(printInvocation_, 0, 0, 0, true)

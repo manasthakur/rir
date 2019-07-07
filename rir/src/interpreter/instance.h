@@ -146,22 +146,16 @@ struct InterpreterInstance {
   private:
     struct SandboxSnapshot {
         unsigned pureStackSize = -1;
-        unsigned sandboxedPromises = 0;
         Rboolean curVis = (Rboolean)NA_LOGICAL;
         size_t stackSize = -1;
-        SEXP stackTop[SANDBOX_STACK_PROTECTION];
 
         void save(InterpreterInstance* ctx) {
             pureStackSize = ctx->pureStack.size();
             curVis = R_Visible;
             stackSize = ostack_length(ctx);
-            for (unsigned i = 0; i < SANDBOX_STACK_PROTECTION; i++)
-                stackTop[i] = ostack_at(ctx, SANDBOX_STACK_PROTECTION - i - 1);
         }
 
         void restore(InterpreterInstance* ctx) {
-            // Sandboxed promises should've already been exited
-            assert(sandboxedPromises == 0);
             // Stop nested records
             while (ctx->pureStack.size() > pureStackSize) {
                 ctx->pureStack.pop();
@@ -169,20 +163,15 @@ struct InterpreterInstance {
             // Restores visibility, so it isn't considered an "effect"
             R_Visible = curVis;
             // Restore the stack
+            assert((size_t)ostack_length(ctx) >= stackSize);
             ostack_popn(ctx, ostack_length(ctx) - stackSize);
-            for (unsigned i = 0; i < SANDBOX_STACK_PROTECTION; i++)
-                ostack_set(ctx, SANDBOX_STACK_PROTECTION - i - 1, stackTop[i]);
         }
     };
 
     std::stack<bool> pureStack;
-    unsigned sandboxes = 0;
     SandboxSnapshot snapshot;
 
   public:
-    Opcode* beforeSandbox = NULL;
-    bool brokeSandbox = false;
-
     RIR_INLINE void startRecordingPure() { pureStack.push(true); }
 
     RIR_INLINE bool stopRecordingPure() {
@@ -196,55 +185,18 @@ struct InterpreterInstance {
 
     RIR_INLINE void recordPure(bool isPure) {
         if (!isPure) {
-            if (sandboxes > 0) {
-                // This will cause all outer frames to exit
-                brokeSandbox = true;
-            }
             if (!pureStack.empty())
                 pureStack.top() = false;
         }
     }
 
-    RIR_INLINE void startSandbox(Opcode* pc) {
-        assert(!brokeSandbox);
-        sandboxes++;
-        if (sandboxes == 1) {
-            beforeSandbox = pc;
-            snapshot.save(this);
-        }
+    RIR_INLINE void beginSandbox() {
+        snapshot.save(this);
     }
 
-    RIR_INLINE void stopSandbox() {
-        assert(!brokeSandbox);
-        if (sandboxes > 0)
-            sandboxes--;
-        if (sandboxes == 0) {
-            assert(snapshot.sandboxedPromises == 0);
-            beforeSandbox = NULL;
-        }
-    }
-
-    // Call after all sandbox stack frames exited and we're back at the
-    // position before the sandbox, to restore the state before
-    RIR_INLINE void undoSandbox() {
-        sandboxes = 0;
-        beforeSandbox = NULL;
-        brokeSandbox = false;
-        snapshot.restore(this);
-    }
-
-    RIR_INLINE bool sandboxInPromise() {
-        return snapshot.sandboxedPromises > 0;
-    }
-
-    RIR_INLINE void enterPromise() {
-        if (sandboxes > 0)
-            snapshot.sandboxedPromises++;
-    }
-
-    RIR_INLINE void exitPromise() {
-        if (sandboxes > 0)
-            snapshot.sandboxedPromises--;
+    RIR_INLINE void endSandbox(bool succeed) {
+        if (!succeed)
+            snapshot.restore(this);
     }
 };
 

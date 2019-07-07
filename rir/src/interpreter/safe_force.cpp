@@ -34,7 +34,8 @@ SEXP safeForcePromise(SEXP e) {
     }
 }
 
-static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
+static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
+                        bool sandboxed) {
 // #define DEBUG_EVAL
 #ifdef DEBUG_EVAL
     std::cout << "Custom eval of " << TYPEOF(e) << ": ";
@@ -84,15 +85,13 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
     SEXP res = NULL;
     switch (TYPEOF(e)) {
     case EXTERNALSXP:
-        res = rirEval_f(e, env);
+        res = rirEval(e, env, sandboxed);
         break;
     default:
-        ctx->recordPure(false);
-        if (ctx->brokeSandbox) {
+        if (sandboxed) // Don't actually evaluate
             res = NULL;
-            break;
-        }
-        res = Rf_eval(e, env);
+        else
+            res = Rf_eval(e, env);
         break;
     }
 
@@ -102,7 +101,7 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx) {
     return res;
 }
 
-SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
+SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx, bool sandboxed) {
     // From GNU-R
     if (PRVALUE(e) != R_UnboundValue)
         return PRVALUE(e);
@@ -127,21 +126,21 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx) {
     prstack.promise = e;
     prstack.next = R_PendingPromises;
     R_PendingPromises = &prstack;
-    ctx->enterPromise();
 
     // The original code is eval(PRCODE(e), PRENV(e))
     //
-    val = promiseEval(PRCODE(e), PRENV(e), ctx);
+    val = promiseEval(PRCODE(e), PRENV(e), ctx, sandboxed);
 
     /* Pop the stack, unmark the promise and set its value field.
        Also set the environment to R_NilValue to allow GC to
        reclaim the promise environment; this is also useful for
        fancy games with delayedAssign() */
-    ctx->exitPromise();
     R_PendingPromises = prstack.next;
     SET_PRSEEN(e, 0);
-    if (ctx->brokeSandbox)
+    if (val == NULL) {
+        assert(sandboxed);
         return NULL;
+    }
     SET_PRVALUE(e, val);
     ENSURE_NAMEDMAX(val);
     SET_PRENV(e, R_NilValue);

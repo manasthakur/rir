@@ -18,20 +18,34 @@ void EffectSpeculation::apply(RirCompiler&, ClosureVersion* function,
     AvailableCheckpoints checkpoint(function, log);
 
     Visitor::run(function->entry, [&](BB* bb) {
+        // inSandbox could be part of an analysis but it's very simple
+        bool inSandbox = false;
         auto ip = bb->begin();
         while (ip != bb->end()) {
-            auto next = ip + 1;
             auto i = *ip;
-            if (i->effects.intersects(Effects(Effect::Reflection) |
-                                      Effect::ReadsEnv | Effect::WritesEnv |
-                                      Effect::LeaksEnv | Effect::ExecuteCode) &&
-                i->hasPureFeedback && !i->isSandboxed()) {
-                if (auto cp = checkpoint.next(i)) {
+
+            if (BeginSandbox::Cast(i))
+                inSandbox = true;
+            else if (EndSandbox::Cast(i))
+                inSandbox = false;
+            else if (i->isSandboxable() && !inSandbox &&
+                     i->effects.intersects(
+                         Effects(Effect::Reflection) | Effect::ReadsEnv |
+                         Effect::WritesEnv | Effect::LeaksEnv |
+                         Effect::ExecuteCode) &&
+                     i->hasPureFeedback) {
+                if (auto cp = checkpoint.at(i)) {
                     i->sandbox(cp);
+                    ip = bb->insert(ip, new BeginSandbox());
+                    ip++;
+                    ip++;
+                    BBTransform::insertAssume(new EndSandbox(), cp, bb, ip,
+                                              true);
                 }
             }
-            ip = next;
+            ip++;
         }
+        assert(!inSandbox);
     });
 }
 } // namespace pir

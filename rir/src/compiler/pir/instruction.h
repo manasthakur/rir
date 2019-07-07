@@ -111,28 +111,19 @@ class Instruction : public Value {
         : Value(t, tag), effects(effects), srcIdx(srcIdx) {}
 
     Effects effects;
-    bool isSandboxed_ = false;
-    Checkpoint* sandboxCheckpoint_ = NULL;
 
   public:
     bool hasPureFeedback = false;
     bool pureFeedback = true;
 
-    bool isSandboxed() const { return isSandboxed_; }
-    Checkpoint*& sandboxCheckpoint() { return sandboxCheckpoint_; }
-
+    virtual bool isSandboxable() const { return false; }
     void sandbox(Checkpoint* checkpoint) {
-        assert(!isSandboxed() && "already sandboxed");
-        isSandboxed_ = true;
-        sandboxCheckpoint_ = checkpoint;
+        elideEnv();
         // May still have visibility, now can deopt, everything else breaks the
         // sandbox
-        effects = (effects & Effect::Visibility) | Effect::TriggerDeopt;
-    }
-
-    void lowerSandbox() {
-        assert(sandboxCheckpoint_ != NULL);
-        sandboxCheckpoint_ = NULL;
+        effects = (effects & (Effects(Effect::Visibility) | Effect::Warn |
+                              Effect::Error)) |
+                  Effect::TriggerDeopt;
     }
 
     void clearEffects() { effects.reset(); }
@@ -275,7 +266,6 @@ class Instruction : public Value {
     virtual void printGraphArgs(std::ostream& out, bool tty) const;
     virtual void printGraphBranches(std::ostream& out, size_t bbId) const;
     virtual void printEnv(std::ostream& out, bool tty) const;
-    void printSandbox(std::ostream& out, bool tty) const;
     virtual void print(std::ostream& out, bool tty = false) const;
     void printGraph(std::ostream& out, bool tty = false) const;
     void printRef(std::ostream& out) const override final;
@@ -934,6 +924,7 @@ class FLIE(Force, 2, Effects::Any()) {
         }
     }
     int minReferenceCount() const override { return MAX_REFCOUNT; }
+    bool isSandboxable() const override { return true; }
 };
 
 class FLI(CastType, 1, Effects::None()) {
@@ -1899,14 +1890,14 @@ class ScheduledDeopt
     void printArgs(std::ostream& out, bool tty) const override;
 };
 
-class FLI(BeginSandbox, 0, Effects::None()) {
+class FLI(BeginSandbox, 0, Effect::TriggerDeopt) {
   public:
-    BeginSandbox() : FixedLenInstruction(NativeType::test, {{}}, {{}}) {}
+    BeginSandbox() : FixedLenInstruction(PirType::voyd(), {{}}, {{}}) {}
 };
 
-class FLI(EndSandbox, 0, Effects::None()) {
+class FLI(EndSandbox, 0, Effect::TriggerDeopt) {
   public:
-    EndSandbox() : FixedLenInstruction(PirType::voyd(), {{}}, {{}}) {}
+    EndSandbox() : FixedLenInstruction(NativeType::test, {{}}, {{}}) {}
 };
 
 #undef FLI

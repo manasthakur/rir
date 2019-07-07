@@ -93,16 +93,6 @@ void OptimizeAssumptions::apply(RirCompiler&, ClosureVersion* function,
                             assume->checkpoint(cp0);
                     }
                 }
-            } else if (auto& cp = instr->sandboxCheckpoint()) {
-                // We are trying to group multiple assumes into the same
-                // checkpoint by finding for each assume the topmost
-                // compatible
-                // checkpoint.
-                // TODO: we could also try to move up the assume itself,
-                // since
-                // if we move both at the same time, we could even jump over
-                // effectful instructions.
-                cp = checkpoint.at(instr);
             }
             ip = next;
         }

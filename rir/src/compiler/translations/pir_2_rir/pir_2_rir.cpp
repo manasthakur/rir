@@ -367,6 +367,8 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
     if (cache.globalEnvsCacheSize() > 0)
         cb.add(BC::clearBindingCache(0, cache.globalEnvsCacheSize()));
 
+    bool inSandbox = false;
+
     LoweringVisitor::run(code->entry, [&](BB* bb) {
         if (isJumpThrough(bb))
             return;
@@ -714,6 +716,24 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 break;
             }
 
+            case Tag::Force:
+                if (inSandbox)
+                    cb.add(BC::forceSb());
+                else
+                    cb.add(BC::force());
+                break;
+
+            case Tag::BeginSandbox:
+                inSandbox = true;
+                // Should never happen unless cleanup is disabled
+                if (EndSandbox::Cast(*(it + 1)))
+                    cb.add(BC::push(R_TrueValue));
+                break;
+
+            case Tag::EndSandbox:
+                inSandbox = false;
+                break;
+
 #define EMPTY(Name)                                                            \
     case Tag::Name: {                                                          \
         break;                                                                 \
@@ -738,15 +758,12 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 SIMPLE(LAnd, lglAnd);
                 SIMPLE(Inc, inc);
                 SIMPLE(Dec, dec);
-                SIMPLE(Force, force);
                 SIMPLE(AsTest, asbool);
                 SIMPLE(Length, length);
                 SIMPLE(ChkMissing, checkMissing);
                 SIMPLE(ChkClosure, isfun);
                 SIMPLE(Seq, seq);
                 SIMPLE(MkCls, close);
-                SIMPLE(BeginSandbox, beginSandbox);
-                SIMPLE(EndSandbox, endSandbox);
 #define V(V, name, Name) SIMPLE(Name, name);
                 SIMPLE_INSTRUCTIONS(V, _);
 #undef V
@@ -1020,24 +1037,6 @@ static bool coinFlip() {
 };
 
 void Pir2Rir::lower(Code* code) {
-    // Lower sandboxes into regular assumptions
-    Visitor::run(code->entry, [&](BB* bb) {
-        auto it = bb->begin();
-        while (it != bb->end()) {
-            if (auto cp = (*it)->sandboxCheckpoint()) {
-                BeginSandbox* bsa = new BeginSandbox();
-                BBTransform::insertAssume(bsa, cp, bb, it, false);
-                assert((*it)->sandboxCheckpoint() == cp);
-                while ((*it)->sandboxCheckpoint() == cp) {
-                    (*it)->lowerSandbox();
-                    it++;
-                }
-                it = bb->insert(it, new EndSandbox());
-            }
-            it++;
-        }
-    });
-
     Visitor::runPostChange(code->entry, [&](BB* bb) {
         auto it = bb->begin();
         while (it != bb->end()) {

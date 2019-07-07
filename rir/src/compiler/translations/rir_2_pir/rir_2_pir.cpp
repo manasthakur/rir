@@ -854,8 +854,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::ldvar_noforce_stubbed_:
     case Opcode::stvar_stubbed_:
     case Opcode::assert_type_:
-    case Opcode::begin_sandbox_:
-    case Opcode::end_sandbox_:
+    case Opcode::force_sb_:
         log.unsupportedBC("Unsupported BC (are you recompiling?)", bc);
         assert(false && "Recompiling PIR not supported for now.");
 
