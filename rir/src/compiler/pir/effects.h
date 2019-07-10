@@ -9,6 +9,9 @@ namespace pir {
 
 // Effect that can be produced by an instruction.
 enum class Effect : uint8_t {
+    // Immediately breaks sandbox (warning: might not cover all cases, currently
+    // just used for speculation)
+    NotSandboxable,
     // Changes R_Visible
     Visibility,
     // Instruction might produce a warning. Example: AsTest warns if the
@@ -34,7 +37,7 @@ enum class Effect : uint8_t {
     // Instruction might execute more R code
     ExecuteCode,
 
-    FIRST = Visibility,
+    FIRST = NotSandboxable,
     LAST = ExecuteCode,
 };
 typedef EnumSet<Effect, unsigned> Effects;

@@ -19,6 +19,7 @@ void printEffects(std::ostream& out, Effects effects) {
     case Effect::Name:                                                         \
         out << Str;                                                            \
         break;
+            CASE(NotSandboxable, "s")
             CASE(Visibility, "v")
             CASE(Warn, "w")
             CASE(Error, "e")

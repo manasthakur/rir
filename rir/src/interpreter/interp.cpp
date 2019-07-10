@@ -54,9 +54,6 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
 #define PC_BOUNDSCHECK(pc, c)                                                  \
     SLOWASSERT((pc) >= (c)->code() && (pc) < (c)->endCode());
 
-#define HANDLE_SANDBOX()                                                       \
-    ctx->recordPure(BC::isPure(*pc)); /* usually noop, else does 1 set */
-
 #ifdef THREADED_CODE
 #define BEGIN_MACHINE NEXT();
 #define INSTRUCTION(name)                                                      \
@@ -65,7 +62,6 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
 #define NEXT()                                                                 \
     (__extension__({                                                           \
         printInterp(pc, c);                                                    \
-        HANDLE_SANDBOX();                                                      \
         goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
     }))
 #define LASTOP                                                                 \
@@ -73,7 +69,6 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
 #else
 #define NEXT()                                                                 \
     (__extension__({                                                           \
-        HANDLE_SANDBOX();                                                      \
         goto* opAddr[static_cast<uint8_t>(advanceOpcode())];                   \
     }))
 #define LASTOP                                                                 \
@@ -81,14 +76,12 @@ static RIR_INLINE SEXP getSrcForCall(Code* c, Opcode* pc,
 #endif
 #else
 #define BEGIN_MACHINE                                                          \
-    HANDLE_SANDBOX();                                                          \
     loop:                                                                      \
     switch (advanceOpcode())
 #define INSTRUCTION(name)                                                      \
     case Opcode::name:                                                         \
         /* debug(c, pc, #name, ostack_length(ctx) - bp, ctx); */
 #define NEXT()                                                                 \
-    HANDLE_SANDBOX();                                                          \
     goto loop
 #define LASTOP                                                                 \
     default:                                                                   \
@@ -130,15 +123,15 @@ static RIR_INLINE SEXP createPromise(Code* code, SEXP env) {
 }
 
 static RIR_INLINE SEXP promiseValue(SEXP promise, InterpreterInstance* ctx,
-                                    bool sandboxed = false) {
+                                    SandboxMode mode = SandboxMode::None) {
     // if already evaluated, return the value
     if (PRVALUE(promise) && PRVALUE(promise) != R_UnboundValue) {
         promise = PRVALUE(promise);
         assert(TYPEOF(promise) != PROMSXP);
         return promise;
     } else {
-        SEXP res = rirForcePromise(promise, ctx, sandboxed);
-        assert(res != NULL || sandboxed);
+        SEXP res = rirForcePromise(promise, ctx, mode);
+        assert(res != NULL || mode == SandboxMode::Sandbox);
         assert((res == NULL || TYPEOF(res) != PROMSXP) &&
                "promise returned promise");
         return res;
@@ -342,6 +335,7 @@ static RIR_INLINE SEXP createLegacyArgsList(CallContext& call,
 
 SEXP evalRirCode(Code*, InterpreterInstance*, SEXP, const CallContext*, Opcode*,
                  R_bcstack_t*, BindingCache*);
+SEXP evalRirCodeRecord(Code* c, InterpreterInstance* ctx, SEXP env);
 SEXP evalRirCodeSandboxed(Code* c, InterpreterInstance* ctx, SEXP env);
 
 static SEXP rirCallTrampoline_(RCNTXT& cntxt, const CallContext& call,
@@ -1534,14 +1528,37 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
 #undef FORCE_PROMISE
 }
 
+SEXP evalRirCodeRecord(Code* c, InterpreterInstance* ctx, SEXP env,
+                       const CallContext* callCtxt, Opcode* initialPC,
+                       R_bcstack_t* localsBase, BindingCache* cache) {
+#define PURE_INSTRUCTION(op) INSTRUCTION(op)
+#define IMPURE_INSTRUCTION(op)                                                 \
+    INSTRUCTION(op)                                                            \
+    ctx->recordUnsafe();
+#define SANDBOX_NOOP_INSTRUCTION(op) INSTRUCTION(op)
+#define FORCE_PROMISE(res, ctx)                                                \
+    res = promiseValue(res, ctx, SandboxMode::Record);
+#include "bc_machine.h"
+#undef PURE_INSTRUCTION
+#undef IMPURE_INSTRUCTION
+#undef SANDBOX_NOOP_INSTRUCTION
+#undef FORCE_PROMISE
+}
+
 SEXP evalRirCodeSandboxed(Code* c, InterpreterInstance* ctx, SEXP env,
                           const CallContext* callCtxt, Opcode* initialPC,
                           R_bcstack_t* localsBase, BindingCache* cache) {
 #define PURE_INSTRUCTION(op) INSTRUCTION(op)
-#define IMPURE_INSTRUCTION(op) INSTRUCTION(op) return NULL;
-#define SANDBOX_NOOP_INSTRUCTION(op) INSTRUCTION(op) if (false)
+#define IMPURE_INSTRUCTION(op)                                                 \
+    INSTRUCTION(op)                                                            \
+    if (ctx->isRecordingSafe())                                                \
+        ctx->recordUnsafe();                                                   \
+    return NULL;
+#define SANDBOX_NOOP_INSTRUCTION(op)                                           \
+    INSTRUCTION(op)                                                            \
+    if (false)
 #define FORCE_PROMISE(res, ctx)                                                \
-    res = promiseValue(res, ctx, true);                                        \
+    res = promiseValue(res, ctx, SandboxMode::Sandbox);                        \
     if (res == NULL)                                                           \
         return NULL;
 #include "bc_machine.h"
@@ -1554,11 +1571,18 @@ SEXP evalRirCodeSandboxed(Code* c, InterpreterInstance* ctx, SEXP env,
 #pragma GCC diagnostic pop
 
 SEXP evalRirCodeExtCaller(Code* c, InterpreterInstance* ctx, SEXP env,
-                          bool sandboxed) {
-    if (sandboxed)
-        return evalRirCodeSandboxed(c, ctx, env, NULL, NULL, NULL, NULL);
-    else
+                          SandboxMode mode) {
+    switch (mode) {
+    case SandboxMode::None:
         return evalRirCode(c, ctx, env, nullptr);
+    case SandboxMode::Record:
+        return evalRirCodeRecord(c, ctx, env, NULL, NULL, NULL, NULL);
+    case SandboxMode::Sandbox:
+        return evalRirCodeSandboxed(c, ctx, env, NULL, NULL, NULL, NULL);
+    default:
+        assert(false);
+        return NULL;
+    }
 }
 
 SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
@@ -1611,15 +1635,17 @@ SEXP rirApplyClosure(SEXP ast, SEXP op, SEXP arglist, SEXP rho,
     return res;
 }
 
-SEXP rirEval_f(SEXP what, SEXP env) { return rirEval(what, env, false); }
+SEXP rirEval_f(SEXP what, SEXP env) {
+    return rirEval(what, env, SandboxMode::None);
+}
 
-SEXP rirEval(SEXP what, SEXP env, bool sandboxed) {
+SEXP rirEval(SEXP what, SEXP env, SandboxMode mode) {
     assert(TYPEOF(what) == EXTERNALSXP);
 
     // TODO: do we not need an RCNTXT here?
 
     if (auto code = Code::check(what)) {
-        return evalRirCodeExtCaller(code, globalContext(), env, sandboxed);
+        return evalRirCodeExtCaller(code, globalContext(), env, mode);
     }
 
     if (auto table = DispatchTable::check(what)) {
@@ -1628,14 +1654,12 @@ SEXP rirEval(SEXP what, SEXP env, bool sandboxed) {
         Function* fun = table->baseline();
         fun->registerInvocation();
 
-        return evalRirCodeExtCaller(fun->body(), globalContext(), env,
-                                    sandboxed);
+        return evalRirCodeExtCaller(fun->body(), globalContext(), env, mode);
     }
 
     if (auto fun = Function::check(what)) {
         fun->registerInvocation();
-        return evalRirCodeExtCaller(fun->body(), globalContext(), env,
-                                    sandboxed);
+        return evalRirCodeExtCaller(fun->body(), globalContext(), env, mode);
     }
 
     assert(false && "Expected a code object or a dispatch table");

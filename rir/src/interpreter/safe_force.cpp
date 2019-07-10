@@ -35,7 +35,7 @@ SEXP safeForcePromise(SEXP e) {
 }
 
 static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
-                        bool sandboxed) {
+                        SandboxMode mode) {
 // #define DEBUG_EVAL
 #ifdef DEBUG_EVAL
     std::cout << "Custom eval of " << TYPEOF(e) << ": ";
@@ -85,10 +85,12 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
     SEXP res = NULL;
     switch (TYPEOF(e)) {
     case EXTERNALSXP:
-        res = rirEval(e, env, sandboxed);
+        res = rirEval(e, env, mode);
         break;
     default:
-        if (sandboxed) // Don't actually evaluate
+        if (mode == SandboxMode::Record)
+            ctx->recordUnsafe();
+        if (mode == SandboxMode::Sandbox) // Don't actually evaluate
             res = NULL;
         else
             res = Rf_eval(e, env);
@@ -101,7 +103,7 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
     return res;
 }
 
-SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx, bool sandboxed) {
+SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx, SandboxMode mode) {
     // From GNU-R
     if (PRVALUE(e) != R_UnboundValue)
         return PRVALUE(e);
@@ -129,7 +131,7 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx, bool sandboxed) {
 
     // The original code is eval(PRCODE(e), PRENV(e))
     //
-    val = promiseEval(PRCODE(e), PRENV(e), ctx, sandboxed);
+    val = promiseEval(PRCODE(e), PRENV(e), ctx, mode);
 
     /* Pop the stack, unmark the promise and set its value field.
        Also set the environment to R_NilValue to allow GC to
@@ -138,7 +140,7 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx, bool sandboxed) {
     R_PendingPromises = prstack.next;
     SET_PRSEEN(e, 0);
     if (val == NULL) {
-        assert(sandboxed);
+        assert(mode == SandboxMode::Sandbox);
         return NULL;
     }
     SET_PRVALUE(e, val);

@@ -113,10 +113,8 @@ class Instruction : public Value {
     Effects effects;
 
   public:
-    bool hasPureFeedback = false;
-    bool pureFeedback = true;
+    ObservedSafe safeFeedback = ObservedSafe::Unknown;
 
-    virtual bool isSandboxable() const { return false; }
     void sandbox(Checkpoint* checkpoint) {
         elideEnv();
         // May still have visibility, now can deopt, everything else breaks the
@@ -124,6 +122,10 @@ class Instruction : public Value {
         effects = (effects & (Effects(Effect::Visibility) | Effect::Warn |
                               Effect::Error)) |
                   Effect::TriggerDeopt;
+    }
+
+    virtual bool alwaysBreaksSandbox() const {
+        return effects.contains(Effect::NotSandboxable);
     }
 
     void clearEffects() { effects.reset(); }
@@ -140,6 +142,7 @@ class Instruction : public Value {
         // Those are effects, and we are required to have them in the correct
         // order. But they are not "doing" anything on their own. If e.g.
         // instructions with those effects are unused, we can remove them.
+        e.reset(Effect::NotSandboxable);
         e.reset(Effect::LeakArg);
         e.reset(Effect::ReadsEnv);
         e.reset(Effect::LeaksEnv);
@@ -714,7 +717,9 @@ class FLI(ChkClosure, 1, Effect::Warn) {
         : FixedLenInstruction(RType::closure, {{PirType::val()}}, {{in}}) {}
 };
 
-class FLIE(StVarSuper, 2, Effects() | Effect::ReadsEnv | Effect::WritesEnv) {
+class FLIE(StVarSuper, 2,
+           Effects() | Effect::NotSandboxable | Effect::ReadsEnv |
+               Effect::WritesEnv) {
   public:
     StVarSuper(SEXP name, Value* val, Value* env)
         : FixedLenInstructionWithEnvSlot(PirType::voyd(), {{PirType::val()}},
@@ -757,7 +762,7 @@ class FLIE(LdVarSuper, 1, Effects() | Effect::Error | Effect::ReadsEnv) {
     int minReferenceCount() const override { return 1; }
 };
 
-class FLIE(StVar, 2, Effect::WritesEnv) {
+class FLIE(StVar, 2, Effects() | Effect::NotSandboxable | Effect::WritesEnv) {
   public:
     bool isStArg = false;
 
@@ -803,9 +808,9 @@ class Branch
     void printGraphBranches(std::ostream& out, size_t bbId) const override;
 };
 
-class Return
-    : public FixedLenInstruction<Tag::Return, Return, 1, Effects::None(),
-                                 HasEnvSlot::No, Controlflow::Exit> {
+class Return : public FixedLenInstruction<Tag::Return, Return, 1,
+                                          Effects(Effect::NotSandboxable),
+                                          HasEnvSlot::No, Controlflow::Exit> {
   public:
     explicit Return(Value* ret)
         : FixedLenInstruction(PirType::voyd(), {{PirType::val()}}, {{ret}}) {}
@@ -908,7 +913,7 @@ class FLIE(MkFunCls, 1, Effects::None()) {
     int minReferenceCount() const override { return MAX_REFCOUNT; }
 };
 
-class FLIE(Force, 2, Effects::Any()) {
+class FLIE(Force, 2, ~Effects(Effect::NotSandboxable)) {
   public:
     // Set to true if we are sure that the promise will be forced here
     bool strict = false;
@@ -924,7 +929,6 @@ class FLIE(Force, 2, Effects::Any()) {
         }
     }
     int minReferenceCount() const override { return MAX_REFCOUNT; }
-    bool isSandboxable() const override { return true; }
 };
 
 class FLI(CastType, 1, Effects::None()) {
@@ -1144,7 +1148,7 @@ class FLI(IsType, 1, Effects::None()) {
     void printArgs(std::ostream& out, bool tty) const override;
 };
 
-class FLI(LdFunctionEnv, 0, Effects::None()) {
+class FLI(LdFunctionEnv, 0, Effect::NotSandboxable) {
   public:
     LdFunctionEnv() : FixedLenInstruction(RType::env) {}
 };
@@ -1763,7 +1767,8 @@ class FLIE(IsEnvStub, 1, Effect::ReadsEnv) {
         : FixedLenInstructionWithEnvSlot(NativeType::test, e) {}
 };
 
-class FLIE(PushContext, 3, Effect::ChangesContexts) {
+class FLIE(PushContext, 3,
+           Effects() | Effect::NotSandboxable | Effect::ChangesContexts) {
   public:
     PushContext(Value* ast, Value* op, Value* sysparent)
         : FixedLenInstructionWithEnvSlot(NativeType::context,
@@ -1771,7 +1776,8 @@ class FLIE(PushContext, 3, Effect::ChangesContexts) {
                                          {{ast, op}}, sysparent) {}
 };
 
-class FLI(PopContext, 2, Effect::ChangesContexts) {
+class FLI(PopContext, 2,
+          Effects() | Effect::NotSandboxable | Effect::ChangesContexts) {
   public:
     PopContext(Value* res, PushContext* push)
         : FixedLenInstruction(PirType::voyd(),

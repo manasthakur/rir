@@ -574,14 +574,14 @@ DEF_INSTR(record_call_, 4, 1, 1, true)
 DEF_INSTR(record_type_, 1, 1, 1, true)
 
 /*
- * pushes a "pure frame" for record_effects or check_effects
+ * pushes a "safe frame" to record if the following code can be sandboxed
  */
-DEF_INSTR(start_recording_pure_, 0, 0, 0, true)
+DEF_INSTR(begin_sandbox_record_, 0, 0, 0, true)
 
 /*
- * pops an "pure frame" pushed by a force, and records the effects
+ * pops an "safe frame", and stores whether the code can be sandboxed
  */
-DEF_INSTR(record_pure_, 1, 0, 0, true)
+DEF_INSTR(end_sandbox_record_, 1, 0, 0, true)
 
 /*
  * The following instructions deal with sandboxed execution. Sandboxed

@@ -165,6 +165,7 @@ class BC {
         LocalsCopy loc_cpy;
         ObservedCallees callFeedback;
         ObservedValues typeFeedback;
+        ObservedSafe safeFeedback;
         PoolAndCachePositionRange poolAndCache;
         CachePositionRange cacheIdx;
         ImmediateArguments() { memset(this, 0, sizeof(ImmediateArguments)); }
@@ -433,7 +434,7 @@ BC_NOARGS(V, _)
                            SignedImmediate contextPos, bool stub);
     inline static BC clearBindingCache(CacheIdx start, unsigned size);
     inline static BC assertType(pir::PirType typ, SignedImmediate instr);
-    inline static BC recordPure();
+    inline static BC endSandboxRecord();
 
     inline static BC decode(Opcode* pc, const Code* code) {
         BC cur;
@@ -732,8 +733,8 @@ BC_NOARGS(V, _)
         case Opcode::assert_type_:
             memcpy(&immediate.assertTypeArgs, pc, sizeof(AssertTypeArgs));
             break;
-        case Opcode::record_pure_:
-            memcpy(&immediate.i, pc, sizeof(Immediate));
+        case Opcode::end_sandbox_record_:
+            memcpy(&immediate.safeFeedback, pc, sizeof(ObservedSafe));
             break;
         case Opcode::invalid_:
         case Opcode::num_of:

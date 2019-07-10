@@ -69,7 +69,7 @@
     V(NESTED, isobj, isobj)                                                    \
     V(NESTED, isstubenv, isstubenv)                                            \
     V(NESTED, return_, return )                                                \
-    V(NESTED, startRecordingPure, start_recording_pure)                        \
+    V(NESTED, beginSandboxRecord, begin_sandbox_record)                        \
     V(NESTED, forceSb, force_sb)
 
 #undef V_SIMPLE_INSTRUCTION

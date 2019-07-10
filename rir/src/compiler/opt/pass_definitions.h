@@ -140,7 +140,10 @@ class PASS(TypeInference);
 
 class PASS(TypeSpeculation);
 
-class PASS(EffectSpeculation);
+/*
+ * Sandbox forces we believe are "safe" to remove effects
+ */
+class PASS(Sandbox);
 
 /*
  * Loop Invariant Code motion

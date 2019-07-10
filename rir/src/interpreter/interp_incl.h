@@ -21,6 +21,8 @@ struct Code;
 struct CallContext;
 class Configurations;
 
+enum class SandboxMode { None, Record, Sandbox };
+
 bool isValidClosureSEXP(SEXP closure);
 
 void initializeRuntime();
@@ -35,12 +37,12 @@ InterpreterInstance* globalContext();
 Configurations* pirConfigurations();
 
 SEXP evalRirCodeExtCaller(Code* c, InterpreterInstance* ctx, SEXP env,
-                          bool sandboxed = false);
+                          SandboxMode mode = SandboxMode::None);
 SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                  const CallContext* callContext);
 
 SEXP rirEval_f(SEXP f, SEXP env);
-SEXP rirEval(SEXP what, SEXP env, bool sandboxed);
+SEXP rirEval(SEXP what, SEXP env, SandboxMode mode);
 SEXP rirApplyClosure(SEXP, SEXP, SEXP, SEXP, SEXP);
 
 SEXP argsLazyCreation(void* rirDataWrapper);

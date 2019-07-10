@@ -145,20 +145,20 @@ struct InterpreterInstance {
     // Sandbox
   private:
     struct SandboxSnapshot {
-        unsigned pureStackSize = -1;
+        unsigned safeStackSize = -1;
         Rboolean curVis = (Rboolean)NA_LOGICAL;
         size_t stackSize = -1;
 
         void save(InterpreterInstance* ctx) {
-            pureStackSize = ctx->pureStack.size();
+            safeStackSize = ctx->safeStack.size();
             curVis = R_Visible;
             stackSize = ostack_length(ctx);
         }
 
         void restore(InterpreterInstance* ctx) {
             // Stop nested records
-            while (ctx->pureStack.size() > pureStackSize) {
-                ctx->pureStack.pop();
+            while (ctx->safeStack.size() > safeStackSize) {
+                ctx->stopRecordingSafe();
             }
             // Restores visibility, so it isn't considered an "effect"
             R_Visible = curVis;
@@ -168,26 +168,31 @@ struct InterpreterInstance {
         }
     };
 
-    std::stack<bool> pureStack;
+    std::stack<bool> safeStack;
     SandboxSnapshot snapshot;
+    bool failNextRecord = false;
 
   public:
-    RIR_INLINE void startRecordingPure() { pureStack.push(true); }
+    RIR_INLINE void startRecordingSafe() {
+        safeStack.push(!failNextRecord);
+        failNextRecord = false;
+    }
 
-    RIR_INLINE bool stopRecordingPure() {
-        assert(!pureStack.empty());
-        bool top = pureStack.top();
-        pureStack.pop();
+    RIR_INLINE bool stopRecordingSafe() {
+        assert(!safeStack.empty());
+        bool top = safeStack.top();
+        safeStack.pop();
         // Effects still apply to outer frame
-        recordPure(top);
+        if (!top && isRecordingSafe())
+            recordUnsafe();
         return top;
     }
 
-    RIR_INLINE void recordPure(bool isPure) {
-        if (!isPure) {
-            if (!pureStack.empty())
-                pureStack.top() = false;
-        }
+    RIR_INLINE bool isRecordingSafe() { return !safeStack.empty(); }
+
+    RIR_INLINE void recordUnsafe() {
+        assert(!safeStack.empty());
+        safeStack.top() = false;
     }
 
     RIR_INLINE void beginSandbox() {
@@ -195,8 +200,12 @@ struct InterpreterInstance {
     }
 
     RIR_INLINE void endSandbox(bool succeed) {
-        if (!succeed)
+        if (!succeed) {
             snapshot.restore(this);
+            // The next recorded section is the one which caused deopt, so
+            // this prevents it from causing deopt again
+            failNextRecord = true;
+        }
     }
 };
 

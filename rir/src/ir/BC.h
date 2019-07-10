@@ -382,10 +382,10 @@ BC BC::assertType(pir::PirType typ, SignedImmediate instr) {
     return BC(Opcode::assert_type_, i);
 }
 
-BC BC::recordPure() {
+BC BC::endSandboxRecord() {
     ImmediateArguments i;
-    i.i = true;
-    return BC(Opcode::record_pure_, i);
+    i.safeFeedback = ObservedSafe::Unknown;
+    return BC(Opcode::end_sandbox_record_, i);
 }
 
 } // namespace rir

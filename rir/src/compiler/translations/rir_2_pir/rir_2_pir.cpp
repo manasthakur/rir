@@ -323,14 +323,14 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         break;
     }
 
-    case Opcode::start_recording_pure_:
+    case Opcode::begin_sandbox_record_:
         insert.sandbox.startSandboxing();
         break;
 
-    case Opcode::record_pure_:
+    case Opcode::end_sandbox_record_:
         for (auto target : insert.sandbox.sandboxed()) {
-            target->hasPureFeedback = true;
-            target->pureFeedback &= bc.immediate.i;
+            assert(target->safeFeedback == ObservedSafe::Unknown);
+            target->safeFeedback = bc.immediate.safeFeedback;
         }
         insert.sandbox.stopSandboxing();
         break;

@@ -900,20 +900,23 @@ BEGIN_MACHINE {
 
     IMPURE_INSTRUCTION(force_sb_) {
         bool succeed = true;
+#define PRINT_SANDBOX PRINT_INTERP
+#if PRINT_SANDBOX
+        std::cout << "** begin sandbox\n";
+#endif
         ctx->beginSandbox();
         if (TYPEOF(ostack_top(ctx)) == PROMSXP) {
             SEXP val = ostack_pop(ctx);
             // If the promise is already evaluated then push the value
             // inside the promise onto the stack, otherwise push the value
             // from forcing the promise
-            SEXP res = promiseValue(val, ctx, true);
+            SEXP res = promiseValue(val, ctx, SandboxMode::Sandbox);
             if (res == NULL) {
                 succeed = false;
                 res = val;
             }
             ostack_push(ctx, res);
         }
-#define PRINT_SANDBOX PRINT_INTERP
 #if PRINT_SANDBOX
         if (succeed)
             std::cout << "** sandbox success\n";
@@ -2304,15 +2307,18 @@ BEGIN_MACHINE {
         NEXT();
     }
 
-    PURE_INSTRUCTION(start_recording_pure_) {
-        ctx->startRecordingPure();
+    PURE_INSTRUCTION(begin_sandbox_record_) {
+        ctx->startRecordingSafe();
         NEXT();
     }
 
-    PURE_INSTRUCTION(record_pure_) {
-        bool* isPure = (bool*)pc;
-        bool newIsPure = ctx->stopRecordingPure();
-        *isPure &= newIsPure;
+    PURE_INSTRUCTION(end_sandbox_record_) {
+        ObservedSafe* feedback = (ObservedSafe*)pc;
+        bool isSafe = ctx->stopRecordingSafe();
+        if (isSafe && *feedback == ObservedSafe::Unknown)
+            *feedback = ObservedSafe::Safe;
+        else if (!isSafe)
+            *feedback = ObservedSafe::Unsafe;
         advanceImmediate();
         NEXT();
     }

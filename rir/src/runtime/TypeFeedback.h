@@ -82,5 +82,7 @@ enum class TypeChecks : uint32_t {
     RealSimpleScalar = 3334,
 };
 
+enum class ObservedSafe : uint32_t { Unknown, Unsafe, Safe };
+
 } // namespace rir
 #endif
