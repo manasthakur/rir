@@ -35,7 +35,7 @@ static void printInterp(Opcode* pc, Code* c) {
     bc.print(std::cout);
 }
 
-static void printLastop() { std::cout << "> lastop\n"; }
+static void printLastop() { std::cout << "# lastop\n"; }
 #endif
 
 static RIR_INLINE SEXP getSrcAt(Code* c, Opcode* pc, InterpreterInstance* ctx) {

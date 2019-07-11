@@ -986,7 +986,8 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
             // Check the return type
             if (pir::Parameter::RIR_CHECK_PIR_TYPES > 0 &&
                 instr->type != PirType::voyd() &&
-                instr->type != NativeType::context && !CastType::Cast(instr) &&
+                instr->type != NativeType::context &&
+                !EndSandbox::Cast(instr) && !CastType::Cast(instr) &&
                 Visitor::check(code->entry, [&](Instruction* i) {
                     if (auto cast = CastType::Cast(i)) {
                         if (cast->arg<0>().val() == instr)
@@ -1003,7 +1004,13 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 } else {
                     instrStr = -1;
                 }
+                if (inSandbox) {
+                    assert(Force::Cast(instr));
+                    cb.add(BC::swap());
+                }
                 cb.add(BC::assertType(instr->type, instrStr));
+                if (inSandbox)
+                    cb.add(BC::swap());
             }
 
             // Store the result
