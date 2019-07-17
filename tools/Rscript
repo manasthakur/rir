@@ -1,1 +1,17 @@
-R
+#!/bin/sh
+
+SCRIPTPATH=`cd $(dirname "$0") && pwd`
+
+if [ -z "$RIR_BUILD" ]; then
+    RIR_BUILD=`pwd`
+fi
+
+R_HOME=`cat $RIR_BUILD/.R_HOME`
+CHK=$1
+
+PKG="$SCRIPTPATH/../rir/"
+
+export EXTRA_LOAD_SO="`ls $RIR_BUILD/librir.*`"
+export EXTRA_LOAD_R="$PKG/R/rir.R"
+
+$R_HOME/bin/`basename "$0"` "$@"

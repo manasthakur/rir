@@ -198,28 +198,29 @@ class VisitorImplementation {
      *
      */
     static void run(BB* bb, const BBAction& action) {
-        forwardGenericRun<false>(bb, nullptr, action);
+        forwardGenericRun<false, BBAction>(bb, nullptr, action);
     }
 
     static void run(BB* bb, BB* stop, const BBAction& action) {
-        forwardGenericRun<false>(bb, stop, action);
+        forwardGenericRun<false, BBAction>(bb, stop, action);
     }
 
     static void runPostChange(BB* bb, const BBAction& action) {
-        forwardGenericRun<true>(bb, nullptr, action);
+        forwardGenericRun<true, BBAction>(bb, nullptr, action);
     }
 
     static bool check(BB* bb, const BBActionPredicate& action) {
-        return forwardGenericRun<false>(bb, nullptr, action);
+        return forwardGenericRun<false, BBActionPredicate>(bb, nullptr, action);
     }
 
     static void runBackward(BB* bb, CFG const& cfg, const BBAction& action) {
-        backwardGenericRun<false>(bb, nullptr, cfg, action);
+        backwardGenericRun<false, BBAction>(bb, nullptr, cfg, action);
     }
 
     static bool checkBackward(BB* bb, CFG const& cfg,
                               const BBActionPredicate& action) {
-        return backwardGenericRun<false>(bb, nullptr, cfg, action);
+        return backwardGenericRun<false, BBActionPredicate>(bb, nullptr, cfg,
+                                                            action);
     }
 
   protected:
@@ -230,9 +231,17 @@ class VisitorImplementation {
     static bool forwardGenericRun(BB* bb, BB* stop, const ActionKind& action) {
         struct Scheduler {
             RIR_INLINE std::array<BB*, 2> operator()(BB* cur) const {
-                if (!VISIT_DEOPT_BRANCH && !cur->isEmpty())
-                    if (Checkpoint::Cast(cur->last()))
+                if (!VISIT_DEOPT_BRANCH) {
+                    if (!cur->isEmpty() && Checkpoint::Cast(cur->last()))
                         return {{cur->next0}};
+                    // Exclude unconditional deopt BB's
+                    if (cur->next0 && !cur->next0->isEmpty() &&
+                        Deopt::Cast(cur->next0->last()))
+                        return {{cur->next1}};
+                    if (cur->next1 && !cur->next1->isEmpty() &&
+                        Deopt::Cast(cur->next1->last()))
+                        return {{cur->next0}};
+                }
                 return {{cur->next0, cur->next1}};
             }
         };
@@ -305,7 +314,6 @@ class VisitorImplementation {
                     return false;
             }
 
-            // cppcheck-suppress knownConditionTrueFalse
             if (!next) {
                 if (!todo.empty()) {
                     next = todo.front();

@@ -59,21 +59,21 @@ if (Sys.getenv("PIR_DEOPT_CHAOS") != "1" &&
     g <- rir.compile(function(x) h(x))
     h <- rir.compile(function(x) 1+i(x))
     i <- rir.compile(function(x) 40-x)
-    
+
     stopifnot(f(-1) == 42)
     stopifnot(f(-1) == 42)
-    
+
     hc1 = .Call("rir_invocation_count", h)
     ic1 = .Call("rir_invocation_count", i)
     g <- pir.compile(g)
     stopifnot(f(-1) == 42)
-    
+
     ## Assert we are really inlined (ie. h and i are not called)
     hc2 = .Call("rir_invocation_count", h)
     ic2 = .Call("rir_invocation_count", i)
     stopifnot(hc1 == hc2)
     stopifnot(ic1 == ic2)
-    
+
     ## Assert we deopt (ie. base version of h and i are invoked)
     stopifnot(f(structure(-1, class="asdf")) == 42)
     hc3 = .Call("rir_invocation_count", h)
@@ -122,11 +122,11 @@ f <- function(j){
     j <- j
     while (j < 2) {
         c(j)
-        j <- j + 1 
-    }   
+        j <- j + 1
+    }
 }
 g <- function(i) {
-  if (i) 
+  if (i)
     f(0)
   else
     f(2)
@@ -135,4 +135,35 @@ g(TRUE)
 g(FALSE)
 g(TRUE)
 delayedAssign("c", fail())
-g(FALSE)  
+g(FALSE)
+
+f0 <- function() {
+    for (i in 1:10)
+        last <- i
+    last
+}
+f0()
+f0()
+f0()
+f0()
+
+xx1 <- function() {
+   ok = 0
+
+   # returning a missing arg is supposed to error
+   f <- function(a,b)
+     a
+
+   tryCatch(f(), error=function(e) ok <<- 1)
+   stopifnot(ok == 1);
+}
+
+xx1()
+xx1()
+xx1()
+xx1()
+xx1()
+xx1()
+xx1()
+xx1()
+xx1()

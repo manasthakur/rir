@@ -225,7 +225,7 @@ SEXP createLegacyArgsListFromStackValues(CallContext& call, bool eagerCallee,
         SEXP arg = call.stackArg(i);
 
         if (eagerCallee && TYPEOF(arg) == PROMSXP) {
-            arg = Rf_eval(arg, materializeCallerEnv(call, ctx));
+            arg = forcePromise(arg);
         }
         __listAppend(&result, &pos, arg, name);
     }
@@ -792,6 +792,9 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
             }
         }
     }
+    Assumptions derived =
+        addDynamicAssumptionsForOneTarget(call, fun->signature());
+    call.givenAssumptions = derived;
 
     bool needsEnv = fun->signature().envCreation ==
                     FunctionSignature::Environment::CallerProvided;
@@ -879,8 +882,7 @@ class SlowcaseCounter {
 SlowcaseCounter SLOWCASE_COUNTER;
 #endif
 
-static RIR_INLINE SEXP builtinCall(CallContext& call,
-                                   InterpreterInstance* ctx) {
+SEXP builtinCall(CallContext& call, InterpreterInstance* ctx) {
     if (call.hasStackArgs() && !call.hasNames()) {
         SEXP res = tryFastBuiltinCall(call, ctx);
         if (res)
@@ -905,7 +907,7 @@ static RIR_INLINE SEXP specialCall(CallContext& call,
     return legacySpecialCall(call, ctx);
 }
 
-static SEXP doCall(CallContext& call, InterpreterInstance* ctx) {
+SEXP doCall(CallContext& call, InterpreterInstance* ctx) {
     assert(call.callee);
 
     switch (TYPEOF(call.callee)) {
@@ -1001,7 +1003,9 @@ static R_INLINE int R_integer_times(int x, int y, Rboolean* pnaflag) {
     }
 }
 
-enum op { PLUSOP, MINUSOP, TIMESOP, DIVOP, POWOP, MODOP, IDIVOP };
+// TODO implement division and maybe others
+enum class Binop { PLUSOP, MINUSOP, TIMESOP };
+enum class Unop { PLUSOP, MINUSOP };
 #define INTEGER_OVERFLOW_WARNING "NAs produced by integer overflow"
 
 static SEXPREC createFakeSEXP(SEXPTYPE t) {
@@ -1084,16 +1088,16 @@ static SEXPREC createFakeCONS(SEXP cdr) {
         } else if (IS_SIMPLE_SCALAR(lhs, INTSXP)) {                            \
             if (IS_SIMPLE_SCALAR(rhs, INTSXP)) {                               \
                 Rboolean naflag = FALSE;                                       \
-                switch (op2) {                                                 \
-                case PLUSOP:                                                   \
+                switch (Binop::op2) {                                          \
+                case Binop::PLUSOP:                                            \
                     int_res =                                                  \
                         R_integer_plus(*INTEGER(lhs), *INTEGER(rhs), &naflag); \
                     break;                                                     \
-                case MINUSOP:                                                  \
+                case Binop::MINUSOP:                                           \
                     int_res = R_integer_minus(*INTEGER(lhs), *INTEGER(rhs),    \
                                               &naflag);                        \
                     break;                                                     \
-                case TIMESOP:                                                  \
+                case Binop::TIMESOP:                                           \
                     int_res = R_integer_times(*INTEGER(lhs), *INTEGER(rhs),    \
                                               &naflag);                        \
                     break;                                                     \
@@ -1216,11 +1220,11 @@ static R_INLINE int R_integer_uminus(int x, Rboolean* pnaflag) {
         } else if (IS_SIMPLE_SCALAR(val, INTSXP)) {                            \
             Rboolean naflag = FALSE;                                           \
             res = Rf_allocVector(INTSXP, 1);                                   \
-            switch (op2) {                                                     \
-            case PLUSOP:                                                       \
+            switch (Unop::op2) {                                               \
+            case Unop::PLUSOP:                                                 \
                 *INTEGER(res) = R_integer_uplus(*INTEGER(val), &naflag);       \
                 break;                                                         \
-            case MINUSOP:                                                      \
+            case Unop::MINUSOP:                                                \
                 *INTEGER(res) = R_integer_uminus(*INTEGER(val), &naflag);      \
                 break;                                                         \
             }                                                                  \

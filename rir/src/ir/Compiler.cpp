@@ -315,6 +315,9 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
     if (fun == symbol::Function && args.length() == 3) {
         if (!voidContext) {
             SEXP fun = Compiler::compileFunction(args[1], args[0]);
+            // Mark this as an inner function to prevent the optimizer from
+            // assuming a stable environment
+            DispatchTable::check(fun)->baseline()->innerFunction = true;
             assert(TYPEOF(fun) == EXTERNALSXP);
             cs << BC::push(args[0]) << BC::push(fun) << BC::push(args[2])
                << BC::close();
@@ -1023,20 +1026,25 @@ void compileCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args,
     // Process arguments:
     // Arguments can be optionally named
     std::vector<BC::FunIdx> callArgs;
+    std::vector<SEXP> eagerVal;
     std::vector<SEXP> names;
     Assumptions assumptions;
 
     bool hasNames = false;
     int i = 0;
+    bool unroll = true;
     for (RListIter arg = RList(args).begin(); arg != RList::end(); ++i, ++arg) {
         if (*arg == R_DotsSymbol) {
             callArgs.push_back(DOTS_ARG_IDX);
             names.push_back(R_NilValue);
+            // TODO: figure out how to support dots symbol in call_ bytecode
+            unroll = false;
             continue;
         }
         if (*arg == R_MissingArg) {
             callArgs.push_back(MISSING_ARG_IDX);
             names.push_back(R_NilValue);
+            eagerVal.push_back(nullptr);
             continue;
         }
 
@@ -1065,17 +1073,42 @@ void compileCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args,
                     assumptions.setSimpleInt(i);
             }
         }
+        eagerVal.push_back(known);
     }
     assert(callArgs.size() < BC::MAX_NUM_ARGS);
 
-    if (Compiler::profile) {
+    if (Compiler::profile)
         cs << BC::recordCall();
+
+    if (unroll) {
+        size_t i = 0;
+        for (auto& a : callArgs) {
+            if (a == MISSING_ARG_IDX) {
+                cs << BC::push(R_MissingArg);
+            } else {
+                if (auto ev = eagerVal[i]) {
+                    cs << BC::push(ev);
+                    cs << BC::mkEagerPromise(a);
+                } else {
+                    cs << BC::mkPromise(a);
+                }
+            }
+            i++;
+        }
     }
     if (hasNames) {
-        cs << BC::callImplicit(callArgs, names, ast, assumptions);
+        if (unroll) {
+            cs << BC::call(callArgs.size(), names, ast, assumptions);
+        } else {
+            cs << BC::callImplicit(callArgs, names, ast, assumptions);
+        }
     } else {
         assumptions.add(Assumption::CorrectOrderOfArguments);
-        cs << BC::callImplicit(callArgs, ast, assumptions);
+        if (unroll) {
+            cs << BC::call(callArgs.size(), ast, assumptions);
+        } else {
+            cs << BC::callImplicit(callArgs, ast, assumptions);
+        }
     }
     if (voidContext)
         cs << BC::pop();

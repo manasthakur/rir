@@ -1,3 +1,4 @@
+#include "../analysis/dead.h"
 #include "../pir/pir_impl.h"
 #include "../transform/bb.h"
 #include "../translations/pir_translator.h"
@@ -23,17 +24,21 @@ class TheCleanup {
         std::unordered_map<BB*, std::unordered_set<Phi*>> usedBB;
         std::deque<Promise*> todo;
 
+        DeadInstructions dead(function);
+
         Visitor::run(function->entry, [&](BB* bb) {
             auto ip = bb->begin();
             while (ip != bb->end()) {
                 Instruction* i = *ip;
                 auto next = ip + 1;
                 bool removed = false;
-                bool dead = i->unused() && !i->branchOrExit();
-                if (dead && !i->hasObservableEffects()) {
+                bool isDead = dead.unused(i);
+                // unused ldfun is a left over from a guard where ldfun was
+                // converted into ldvar.
+                if ((!i->hasObservableEffects() || LdFun::Cast(i)) && isDead) {
                     removed = true;
                     next = bb->remove(ip);
-                } else if (dead &&
+                } else if (isDead &&
                            i->getObservableEffects() == Effect::Visibility &&
                            i->visibilityFlag() != VisibilityFlag::Unknown &&
                            !Visible::Cast(i) && !Invisible::Cast(i)) {
@@ -86,7 +91,7 @@ class TheCleanup {
                             usedBB[curBB].insert(phi);
                     }
                 } else if (auto arg = MkArg::Cast(i)) {
-                    if (arg->unused()) {
+                    if (dead.unused(arg)) {
                         removed = true;
                         next = bb->remove(ip);
                     } else {
@@ -102,7 +107,10 @@ class TheCleanup {
                     }
                 } else if (auto tt = CastType::Cast(i)) {
                     auto arg = tt->arg<0>().val();
-                    if (arg->type == tt->type) {
+                    if ((tt->kind == CastType::Upcast &&
+                         tt->type.isA(arg->type)) ||
+                        (tt->kind == CastType::Downcast &&
+                         arg->type.isA(tt->type))) {
                         tt->replaceUsesWith(arg);
                         removed = true;
                         next = bb->remove(ip);
@@ -139,7 +147,7 @@ class TheCleanup {
                 }
 
                 if (!removed) {
-                    i->updateType();
+                    i->updateTypeAndEffects();
                 }
                 ip = next;
             }

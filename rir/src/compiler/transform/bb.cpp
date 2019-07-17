@@ -1,10 +1,12 @@
 #include "bb.h"
+#include "../analysis/dead.h"
 #include "../pir/pir_impl.h"
 #include "../util/visitor.h"
 #include "R/Funtab.h"
 #include "R/r.h"
 
 #include <unordered_map>
+#include <unordered_set>
 
 namespace rir {
 namespace pir {
@@ -54,7 +56,7 @@ BB* BBTransform::clone(BB* src, Code* target, ClosureVersion* targetClosure) {
                 if (promMap.count(p)) {
                     mk->updatePromise(promMap.at(p));
                 } else {
-                    auto c = targetClosure->createProm(p->srcPoolIdx());
+                    auto c = targetClosure->createProm(p->rirSrc());
                     c->entry = clone(p->entry, c, targetClosure);
                     mk->updatePromise(c);
                 }
@@ -166,9 +168,13 @@ BB* BBTransform::lowerExpect(Code* code, BB* src, BB::Instrs::iterator position,
         BB* debug = new BB(code, code->nextBBId++);
         SEXP msg = Rf_mkString(debugMessage.c_str());
         auto ldprint = new LdConst(print);
-        auto ldmsg = new LdConst(msg);
+        Instruction* ldmsg = new LdConst(msg);
         debug->append(ldmsg);
         debug->append(ldprint);
+        // Hack to silence the verifier.
+        ldmsg = new CastType(ldmsg, CastType::Downcast, PirType::any(),
+                             RType::prom);
+        debug->append(ldmsg);
         debug->append(new Call(Env::elided(), ldprint, {ldmsg},
                                Tombstone::framestate(), 0));
         debug->setNext(deoptBlock);
@@ -218,18 +224,76 @@ void BBTransform::renumber(Code* fun) {
 }
 
 void BBTransform::removeDeadInstrs(Code* fun) {
+    // Map of phis to other instructions that use them
+    // key -> {val_1, ..., val_n} means val_1 ... val_n have key as an input
+    std::unordered_map<Phi*, std::unordered_set<Instruction*>> phiUses;
+
+    DeadInstructions dead(fun);
+
     Visitor::run(fun->entry, [&](BB* bb) {
         auto ip = bb->begin();
         while (ip != bb->end()) {
             Instruction* i = *ip;
             auto next = ip + 1;
-            if (i->unused() && !i->branchOrExit() &&
-                !i->hasObservableEffects()) {
+            if (!i->hasObservableEffects() && dead.unused(i)) {
                 next = bb->remove(ip);
+            } else {
+                i->eachArg([&](Value* v) {
+                    if (auto phi = Phi::Cast(v)) {
+                        auto& uses = phiUses[phi];
+                        uses.insert(i);
+                    }
+                });
             }
             ip = next;
         }
     });
+
+    // Now see which phis are dead and can be removed. At this point, a phi is
+    // dead if it is only used by itself or dead phis.
+    // Alternatively, a phi is live if any of its (transitive) uses is a
+    // non-phi instruction.
+    auto isDeadPhi = [&phiUses](Phi* phi) -> bool {
+        // Idea is that phiUses is a dependency graph, so we use DFS to find a
+        // non-phi instruction.
+        std::unordered_set<Phi*> seen;
+        std::vector<Phi*> todo;
+        todo.push_back(phi);
+
+        while (!todo.empty()) {
+            Phi* cur = todo.back();
+            todo.pop_back();
+            if (!seen.count(cur)) {
+                seen.insert(cur);
+                const auto& uses = phiUses[cur];
+
+                // Phis not used by any other instruction have already been
+                // removed.
+                assert(!uses.empty());
+
+                for (const auto& i : uses) {
+                    if (auto p = Phi::Cast(i)) {
+                        todo.push_back(p);
+                    } else {
+                        // Found a non-phi instruction that uses cur, so phi is
+                        // not dead
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    };
+
+    // Iterate through phiUses, check if the phi is dead. If so, remove the
+    // instruction from the cfg.
+    for (const auto& kv : phiUses) {
+        const auto& phi = kv.first;
+        if (isDeadPhi(phi)) {
+            phi->bb()->remove(phi);
+        }
+    }
 }
 
 } // namespace pir

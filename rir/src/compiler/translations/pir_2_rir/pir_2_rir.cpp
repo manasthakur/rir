@@ -10,6 +10,7 @@
 #include "compiler/analysis/verifier.h"
 #include "compiler/parameter.h"
 #include "event_counters.h"
+#include "compiler/native/lower.h"
 #include "interpreter/instance.h"
 #include "ir/CodeStream.h"
 #include "ir/CodeVerifier.h"
@@ -144,6 +145,16 @@ class Pir2Rir {
                             next = code.emplace(next, BC::dup2(), noSource);
                             changed = true;
                         }
+                    } else if (bc.is(rir::Opcode::swap_) &&
+                               next != code.end() &&
+                               next->first.is(rir::Opcode::swap_)) {
+                        next = code.erase(it, plus(next, 1));
+                        changed = true;
+                    } else if (bc.is(rir::Opcode::push_) &&
+                               next != code.end() &&
+                               next->first.is(rir::Opcode::pop_)) {
+                        next = code.erase(it, plus(next, 1));
+                        changed = true;
                     } else if (bc.is(rir::Opcode::dup_) && next != code.end() &&
                                plus(next, 1) != code.end() &&
                                next->first.is(rir::Opcode::isobj_) &&
@@ -258,6 +269,10 @@ static unsigned ClosuresCompiled =
     EventCounters::instance().registerCounter("closures compiled");
 #endif
 
+static bool PIR_NATIVE_BACKEND =
+    getenv("PIR_NATIVE_BACKEND") &&
+    0 == strncmp("1", getenv("PIR_NATIVE_BACKEND"), 1);
+
 rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 #ifdef ENABLE_EVENT_COUNTERS
     if (ENABLE_EVENT_COUNTERS) {
@@ -361,6 +376,8 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
             }
     }
 
+    std::unordered_map<Promise*, unsigned> promMap;
+
     CodeBuffer cb(ctx.cs());
 
     const CachePosition cache(code);
@@ -437,13 +454,7 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                         cb.add(BC::push(R_NilValue));
                     } else if (Env::isStaticEnv(what)) {
                         auto env = Env::Cast(what);
-                        // Here we could also load env->rho, but if the user
-                        // were to change the environment on the closure our
-                        // code would be wrong.
-                        if (env == cls->owner()->closureEnv())
-                            cb.add(BC::parentEnv());
-                        else
-                            cb.add(BC::push(env->rho));
+                        cb.add(BC::push(env->rho));
                     } else {
                         if (!alloc.hasSlot(what)) {
                             std::cerr << "Don't know how to load the env ";
@@ -654,9 +665,18 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
             }
 
             case Tag::MkArg: {
-                auto p = MkArg::Cast(instr)->prom();
+                auto mk = MkArg::Cast(instr);
+                auto p = mk->prom();
                 unsigned id = ctx.cs().addPromise(getPromise(ctx, p));
-                cb.add(BC::promise(id));
+                promMap[p] = id;
+                if (mk->eagerArg()) {
+                    cb.add(BC::mkEagerPromise(id));
+                } else {
+                    // Remove the UnbounValue argument pushed by loadArg, this
+                    // will be cleaned up by the peephole opts
+                    cb.add(BC::pop());
+                    cb.add(BC::mkPromise(id));
+                }
                 break;
             }
 
@@ -702,7 +722,7 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                     else
                         cb.add(BC::is(TypeChecks::RealNonObject));
                 } else {
-                    assert(false);
+                    t.print(std::cout);
                 }
                 break;
             }
@@ -998,7 +1018,7 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 int instrStr;
                 if (pir::Parameter::RIR_CHECK_PIR_TYPES > 1) {
                     std::stringstream instrPrint;
-                    instr->print(instrPrint, false);
+                    instr->printRecursive(instrPrint, 2);
                     instrStr =
                         Pool::insert(Rf_mkString(instrPrint.str().c_str()));
                 } else {
@@ -1034,6 +1054,15 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 
     auto localsCnt = alloc.slots();
     auto res = ctx.finalizeCode(localsCnt, cache.size());
+    if (PIR_NATIVE_BACKEND) {
+        {
+            Lower native;
+            if (auto n =
+                    native.tryCompile(cls, code, promMap, needsEnsureNamed)) {
+                res->nativeCode = (NativeCode)n;
+            }
+        }
+    }
     return res;
 }
 
@@ -1118,8 +1147,6 @@ void Pir2Rir::lower(Code* code) {
                 next = bb->remove(it);
                 // Branching removed. Preserve invariant
                 bb->next1 = nullptr;
-            } else if (MkArg::Cast(*it) && (*it)->unused()) {
-                next = bb->remove(it);
             }
             it = next;
         }

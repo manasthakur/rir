@@ -98,7 +98,8 @@ BC_NOARGS(V, _)
         cs.insert(immediate.callBuiltinFixedArgs);
         break;
 
-    case Opcode::promise_:
+    case Opcode::mk_promise_:
+    case Opcode::mk_eager_promise_:
     case Opcode::push_code_:
         cs.insert(immediate.fun);
         return;
@@ -276,7 +277,8 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
             break;
         case Opcode::record_call_:
         case Opcode::record_type_:
-        case Opcode::promise_:
+        case Opcode::mk_promise_:
+        case Opcode::mk_eager_promise_:
         case Opcode::push_code_:
         case Opcode::br_:
         case Opcode::brtrue_:
@@ -415,7 +417,8 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
             break;
         case Opcode::record_call_:
         case Opcode::record_type_:
-        case Opcode::promise_:
+        case Opcode::mk_promise_:
+        case Opcode::mk_eager_promise_:
         case Opcode::push_code_:
         case Opcode::br_:
         case Opcode::brtrue_:
@@ -621,7 +624,23 @@ void BC::print(std::ostream& out) const {
         break;
     case Opcode::is_:
     case Opcode::alloc_:
-        out << type2char(immediate.i);
+        switch (immediate.i) {
+            case static_cast<Immediate>(TypeChecks::RealNonObject):
+                out << "RealNonObject";
+                break;
+            case static_cast<Immediate>(TypeChecks::RealSimpleScalar):
+                out << "RealSimpleScalar";
+                break;
+            case static_cast<Immediate>(TypeChecks::IntegerNonObject):
+                out << "IntegerNotObject";
+                break;
+            case static_cast<Immediate>(TypeChecks::IntegerSimpleScalar):
+                out << "IntegerSimpleScalar";
+                break;
+            default:
+                out << type2char(immediate.i);
+                break;
+        }
         break;
     case Opcode::record_call_: {
         ObservedCallees prof = immediate.callFeedback;
@@ -652,7 +671,8 @@ void BC::print(std::ostream& out) const {
 BC_NOARGS(V, _)
 #undef V
         break;
-    case Opcode::promise_:
+    case Opcode::mk_promise_:
+    case Opcode::mk_eager_promise_:
     case Opcode::push_code_:
         out << std::hex << immediate.fun << std::dec;
         break;

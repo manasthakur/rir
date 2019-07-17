@@ -37,8 +37,15 @@ enum class Effect : uint8_t {
     // Instruction might execute more R code
     ExecuteCode,
 
+    // If we speculatively optimize an instruction then we must set this flag
+    // to avoid it getting hoisted over its assumption. Take care when removing
+    // or masking this flag. Most of the time it is not correct to remove it,
+    // e.g. the type of inputs to an instructions might already be based on
+    // assumptions.
+    DependsOnAssume,
+
     FIRST = NotSandboxable,
-    LAST = ExecuteCode,
+    LAST = DependsOnAssume,
 };
 typedef EnumSet<Effect, unsigned> Effects;
 

@@ -169,10 +169,28 @@ struct PirType {
         return *this;
     }
 
-    RIR_INLINE bool merge(const PirType& other) {
-        PirType t = *this;
-        *this = *this | other;
-        return *this != t;
+    inline PirType mergeWithConversion(const PirType& other) const {
+        assert(isRType() && other.isRType());
+
+        auto res = *this | other;
+
+        auto fixup = [&](PirType a, PirType b) {
+            if (a.isA(PirType() | RType::integer | RType::logical) &&
+                b.isA(RType::integer)) {
+                res = res & RType::integer;
+                return true;
+            } else if (a.isA(PirType() | RType::real | RType::logical |
+                             RType::integer) &&
+                       b.isA(RType::real)) {
+                res = res & RType::real;
+                return true;
+            }
+            return false;
+        };
+
+        fixup(*this, other) || fixup(other, *this);
+
+        return res;
     }
 
     void merge(const ObservedValues& other);
@@ -353,10 +371,8 @@ struct PirType {
             return RType::nil;
         }
         if (isA(num() | RType::str | RType::cons | RType::code)) {
-            if (idx.isScalar())
-                return scalar();
-            else
-                return orNotScalar();
+            // e.g. c(1,2,3)[-1] returns c(2,3)
+            return orNotScalar();
         } else if (isA(RType::vec)) {
             return RType::vec;
         } else if (!maybeObj() && !PirType(RType::prom).isA(*this)) {
@@ -458,6 +474,11 @@ struct PirType {
     bool isInstance(SEXP val) const;
 
     void print(std::ostream& out = std::cout) const;
+
+    size_t hash() const {
+        return hash_combine(flags_.to_i(),
+                            isRType() ? t_.r.to_i() : t_.n.to_i());
+    }
 };
 
 inline std::ostream& operator<<(std::ostream& out, NativeType t) {
@@ -571,6 +592,9 @@ inline std::ostream& operator<<(std::ostream& out, PirType t) {
         out << "val";
     } else if (t.isRType() && PirType::val().baseType() == t.baseType()) {
         out << "val?";
+    } else if (t.isRType() &&
+               PirType::num().notMissing().baseType() == t.baseType()) {
+        out << "num";
     } else {
         if (t.t_.r.count() > 1)
             out << "(";
@@ -596,5 +620,12 @@ inline std::ostream& operator<<(std::ostream& out, PirType t) {
 }
 } // namespace pir
 } // namespace rir
+
+namespace std {
+template <>
+struct hash<rir::pir::PirType> {
+    size_t operator()(const rir::pir::PirType& t) const { return t.hash(); }
+};
+}
 
 #endif

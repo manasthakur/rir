@@ -5,17 +5,21 @@ stages:
   - Run tests
   - Deploy
   - Cleanup
+  - Benchmark
 
 before_script:
-  - export PIR_MAX_INPUT_SIZE=99999
-  - export PIR_INLINER_MAX_SIZE=99999
+  - export PIR_MAX_INPUT_SIZE=10000
+  - export PIR_INLINER_MAX_SIZE=10000
   - export PIR_DEOPT_CHAOS_SEED=$RANDOM
   - echo "PIR_MAX_INPUT_SIZE=$PIR_MAX_INPUT_SIZE PIR_INLINER_MAX_SIZE=$PIR_INLINER_MAX_SIZE PIR_DEOPT_CHAOS_SEED=$PIR_DEOPT_CHAOS_SEED"
+  - export REBENCH_OPTIONS="--commit-id=$CI_COMMIT_SHA --branch=master"
+  - export REBENCH_RUN="/opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks /opt/rir/build/release"
+  - export REBENCH_RUN_BL="/opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks . /opt/rir/external/custom-r /opt/graal"
 
 sanity:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   stage: Sanity Checks
   script:
     - /opt/rir/tools/cppcheck --xml
@@ -42,6 +46,8 @@ benchmark container:
   variables:
     DOCKER_HOST: tcp://docker:2375/
     DOCKER_DRIVER: overlay2
+  only:
+    - master
   services:
     - docker:dind
   before_script:
@@ -52,104 +58,107 @@ benchmark container:
     - docker build --build-arg CI_COMMIT_SHA=$CI_COMMIT_SHA -t registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA .
     - docker push registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
 
-tests_release:
+# Run check-all in release mode  (additionally check pir types)
+test_release:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   stage: Run tests
-  script:
-    - cd /opt/rir/build/release
-    - bin/gnur-make-tests test-all-devel
-    - ../../tools/check-gnur-make-tests-error
-    - bin/gnur-make-tests check-recommended
-    - ../../tools/check-gnur-make-tests-error
-
-test_types_and_serialize:
-  image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
-  variables:
-      GIT_STRATEGY: none
-  stage: Run tests
+  retry: 1
   script:
     - cd /opt/rir/build/release
     - RIR_CHECK_PIR_TYPES=1 bin/tests
+    - PIR_PARAMETER_BLACKLIST="Sandbox" RIR_CHECK_PIR_TYPES=1 bin/gnur-make-tests check-all
     - RIR_CHECK_PIR_TYPES=1 bin/gnur-make-tests check-all
     - ../../tools/check-gnur-make-tests-error
-    - RIR_SERIALIZE_CHAOS=1 bin/tests
-    - RIR_SERIALIZE_CHAOS=1 bin/gnur-make-tests test-all-basics
-    - RIR_SERIALIZE_CHAOS=3 bin/tests
 
-tests_fullverifier:
-  image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
-  variables:
-      GIT_STRATEGY: none
-  stage: Run tests
-  script:
-    - cd /opt/rir/build/fullverifier
-    - bin/tests
-    - bin/gnur-make-tests check
-    - PIR_WARMUP=4 ./bin/gnur-make-tests check
-    - PIR_ENABLE=force ./bin/gnur-make-tests check
-
+# Run some tests in the debug mode
 tests_debug:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   stage: Run tests
+  retry: 1
   script:
     - cd /opt/rir/build/debugopt
     - export UNSOUND_OPTS=off
-    - bin/tests
     - R_ENABLE_JIT=0 ./bin/tests
     - R_ENABLE_JIT=1 ./bin/tests
     - R_ENABLE_JIT=2 ./bin/tests
     - R_ENABLE_JIT=3 ./bin/tests
     - PIR_ENABLE=off ./bin/tests
     - PIR_ENABLE=force ./bin/tests
-    - for i in `seq 1 5`; do PIR_DEOPT_CHAOS_SEED=$i PIR_DEOPT_CHAOS=1 ./bin/tests ; done
     - ./bin/gnur-make-tests check-devel
     - ../../tools/check-gnur-make-tests-error
 
-test_sanitize:
+# Run some tests in the full verify (release) mode
+tests_fullverify:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   stage: Run tests
+  retry: 1
   script:
-    - cd /opt/rir/build/sanitize
-    - ENABLE_VALGRIND=1 ./bin/tests
-    - R_GCTORTURE=200 bin/tests
-    - R_GCTORTURE=1000 ./bin/gnur-make-tests check
+    - cd /opt/rir/build/fullverifier
+    - bin/tests
+    - bin/gnur-make-tests check-devel
 
-test_big_inline:
+# Test particular features, like deoptimization
+test_features:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   stage: Run tests
+  retry: 1
   script:
-    - cd /opt/rir/build/release
-    - PIR_INLINER_MAX_INLINEE_SIZE=2000 ./bin/tests
-    - PIR_INLINER_MAX_INLINEE_SIZE=1000 ./bin/gnur-make-tests check
-    - for i in `seq 1 3`; do PIR_INLINER_MAX_INLINEE_SIZE=2000 PIR_DEOPT_CHAOS_SEED=$i PIR_DEOPT_CHAOS=1 ./bin/tests ; done
-
-test_flaky:
-  image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
-  variables:
-      GIT_STRATEGY: none
-  stage: Run tests
-  retry: 2
-  script:
+    - cd /opt/rir/build/debugopt
+    - PIR_NATIVE_BACKEND=1 ./bin/tests
     - cd /opt/rir/build/release
     - PIR_DEOPT_CHAOS=1 PIR_INLINER_MAX_INLINEE_SIZE=800 bin/gnur-make-tests check
     - PIR_WARMUP=2 PIR_DEOPT_CHAOS=1 ./bin/gnur-make-tests check
 
+# Run ubsan and gc torture
+test_sanitize:
+  image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
+  variables:
+    GIT_STRATEGY: none
+  stage: Run tests
+  retry: 1
+  only:
+    - master
+  script:
+    - cd /opt/rir/build/sanitize
+    - ENABLE_VALGRIND=1 ./bin/tests
+    - R_GCTORTURE=500 bin/tests
+    - R_GCTORTURE=5000 ./bin/gnur-make-tests check
+
+# Test with inlining big functions
+test_big_inline:
+  image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
+  variables:
+    GIT_STRATEGY: none
+  stage: Run tests
+  retry: 1
+  only:
+    - master
+  script:
+    - cd /opt/rir/build/release
+    - PIR_INLINER_MAX_INLINEE_SIZE=2000 ./bin/tests
+    - PIR_INLINER_MAX_INLINEE_SIZE=1500 PIR_DEOPT_CHAOS=1 ./bin/tests
+    - PIR_INLINER_MAX_INLINEE_SIZE=1000 ./bin/gnur-make-tests check
+
+# Test the benchmarks container before deploying
 test_benchmarks:
   image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   stage: Run tests
+  only:
+    - master
   script:
-    - PATH=~/.local/bin:$PATH /opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks /opt/rir/build/release/ /opt/rir/external/custom-r e:RIR e:PIR -r -SN -wu 0 --iterations 2
-    - PIR_DEOPT_CHAOS=1 PATH=~/.local/bin:$PATH /opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks /opt/rir/build/release/ /opt/rir/external/custom-r e:RIR e:PIR -r -SN -wu 0 --iterations 2
+    - PATH=~/.local/bin:$PATH /opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks /opt/rir/build/release/ /opt/rir/external/custom-r "e:RIR e:PIR -r -SN -wu 0 --iterations 2"
+    - PIR_DEOPT_CHAOS=1 PATH=~/.local/bin:$PATH /opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks /opt/rir/build/release/ /opt/rir/external/custom-r "e:PIR -r -SN -wu 0 --iterations 2"
+    - PATH=~/.local/bin:$PATH /opt/rbenchmarking/Setup/run.sh /opt/rbenchmarking/rebench.conf /opt/rbenchmarking/Benchmarks /opt/rir/build/release/ /opt/rir/external/custom-r "e:PIR-NATIVE -r -SN -wu 0 --iterations 3"
 
 deploy:
   stage: Deploy
@@ -162,7 +171,7 @@ deploy:
   before_script:
     - docker info
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   script:
     - echo "$CI_BUILD_TOKEN" | docker login -u "$CI_BUILD_USER" --password-stdin registry.gitlab.com
     - docker pull registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
@@ -180,3 +189,117 @@ cleanup_registry:
   before_script: []
   script:
     - echo "$CI_BUILD_TOKEN" | ruby container/cleanup.rb
+
+benchmark_rir:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmark
+  script:
+    - $REBENCH_RUN "e:RIR $REBENCH_OPTIONS --environment=PragueDesktop"
+benchmark_pir:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmark
+  script:
+    - $REBENCH_RUN "e:PIR $REBENCH_OPTIONS --environment=PragueDesktop"
+benchmark_native:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmark
+  script:
+    - $REBENCH_RUN "e:PIR-NATIVE $REBENCH_OPTIONS --environment=PragueDesktop"
+benchmark_gnur:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark-baseline
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmark
+  script:
+    - $REBENCH_RUN_BL "e:GNU-R $REBENCH_OPTIONS --environment=PragueDesktop"
+benchmark_fastr:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark-baseline
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmark
+  script:
+    - $REBENCH_RUN_BL "e:FASTR $REBENCH_OPTIONS --environment=PragueDesktop"
+  allow_failure: true
+
+benchmark_rir_ginger:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmarks-ginger
+  script:
+    - $REBENCH_RUN "e:RIR $REBENCH_OPTIONS --environment=Prg-Ginger"
+benchmark_pir_ginger:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmarks-ginger
+  script:
+    - $REBENCH_RUN "e:PIR $REBENCH_OPTIONS  --environment=Prg-Ginger"
+benchmark_native_ginger:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmarks-ginger
+  script:
+    - $REBENCH_RUN "e:PIR-NATIVE $REBENCH_OPTIONS  --environment=Prg-Ginger"
+benchmark_gnur_ginger:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark-baseline
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmarks-ginger
+  script:
+    - $REBENCH_RUN_BL "e:GNU-R $REBENCH_OPTIONS  --environment=Prg-Ginger"
+benchmark_fastr_ginger:
+  image: registry.gitlab.com/rirvm/rir_mirror/benchmark-baseline
+  stage: Benchmark
+  variables:
+    GIT_STRATEGY: none
+  only:
+    - master
+  tags:
+    - benchmarks-ginger
+  script:
+    - $REBENCH_RUN_BL "e:FASTR $REBENCH_OPTIONS  --environment=Prg-Ginger"
+  allow_failure: true

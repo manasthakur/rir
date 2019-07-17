@@ -1,5 +1,35 @@
 assert(env != symbol::delayedEnv || (callCtxt != nullptr));
 
+if (c->nativeCode) {
+    if (callCtxt && !callCtxt->hasStackArgs() && !callCtxt->hasNames()) {
+        assert(!LazyEnvironment::check(callCtxt->callerEnv));
+        void* stackBase = R_BCNodeStackTop;
+        for (size_t i = 0; i < callCtxt->suppliedArgs; ++i) {
+            if (callCtxt->missingArg(i)) {
+                ostack_push(ctx, R_MissingArg);
+            } else {
+                auto arg = callCtxt->implicitArg(i);
+                auto prom = createPromise(arg, callCtxt->callerEnv);
+                ostack_push(ctx, prom);
+                if (callCtxt->givenAssumptions.isEager(i)) {
+                    promiseValue(prom, ctx);
+                }
+            }
+        }
+        auto res = c->nativeCode(c, ctx, stackBase, env, callCtxt->callee);
+        ostack_popn(ctx, callCtxt->suppliedArgs);
+        return res;
+    }
+    if (!callCtxt || callCtxt->hasStackArgs()) {
+        return c->nativeCode(c, ctx,
+                             callCtxt ? (void*)callCtxt->stackArgs : nullptr,
+                             env, callCtxt ? callCtxt->callee : nullptr);
+    }
+    // TODO: figure out how to create some adapter frame here. If we fix the
+    // fall through case, we don't have to emit rir bytecode as fallback
+    // anymore...
+}
+
 #ifdef THREADED_CODE
 static void* opAddr[static_cast<uint8_t>(Opcode::num_of)] = {
 #define DEF_INSTR(name, ...) (__extension__ && op_##name),
@@ -877,11 +907,19 @@ BEGIN_MACHINE {
         NEXT();
     }
 
-    PURE_INSTRUCTION(promise_) {
+    INSTRUCTION(mk_eager_promise_) {
         Immediate id = readImmediate();
         advanceImmediate();
         SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);
         SET_PRVALUE(prom, ostack_pop(ctx));
+        ostack_push(ctx, prom);
+        NEXT();
+    }
+
+    INSTRUCTION(mk_promise_) {
+        Immediate id = readImmediate();
+        advanceImmediate();
+        SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);
         ostack_push(ctx, prom);
         NEXT();
     }

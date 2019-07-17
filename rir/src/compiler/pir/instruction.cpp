@@ -45,6 +45,8 @@ extern std::ostream& operator<<(std::ostream& out,
     return out;
 }
 
+constexpr Effects Instruction::errorWarnVisible;
+
 void Instruction::printRef(std::ostream& out) const {
     if (type == RType::env)
         out << "e" << id();
@@ -167,16 +169,6 @@ Instruction::InstructionUID Instruction::id() const {
     return InstructionUID(bb()->id, bb()->indexOf(this));
 }
 
-bool Instruction::unused() {
-    if (type == PirType::voyd())
-        return true;
-    return Visitor::check(bb(), [&](Instruction* i) {
-        bool unused = true;
-        i->eachArg([&](Value* v) { unused = unused && (v != this); });
-        return unused;
-    });
-}
-
 Instruction* Instruction::hasSingleUse() {
     size_t seen = 0;
     Instruction* usage;
@@ -212,49 +204,75 @@ static void checkReplace(Instruction* origin, Value* replace) {
     }
 }
 
-static void replaceInOne(Instruction* i, Instruction* old, Value* replace) {
-    i->eachArg([&](InstrArg& arg) {
-        if (arg.val() == old)
-            arg.val() = replace;
-    });
-}
-
-void Instruction::replaceUsesWithLimits(Value* replace, BB* start,
-                                        Instruction* stop) {
+void Instruction::replaceDominatedUses(Instruction* replace) {
     checkReplace(this, replace);
 
-    auto apply = [&](BB* start) {
-        Visitor::run(start, stop ? stop->bb() : nullptr, [&](BB* bb) {
-            for (auto& i : *bb) {
-                if (i == stop)
-                    return;
-                replaceInOne(i, this, replace);
-            }
-        });
-    };
+    auto start = false;
 
-    // Since stop might also be in start (before the instruction to be
-    // replaced), we need to deal with start specially and only start after the
-    // instruction to be replaced (ignoring stop in that search).
-    if (start == bb()) {
-        bool found = false;
-        for (auto& i : *start) {
-            if (found) {
-                replaceInOne(i, this, replace);
+    // TODO: ensure graph is numbered in dominance order so we don't need this
+    DominanceGraph dom(replace->bb()->owner);
+
+    Visitor::run(replace->bb(), bb(), [&](BB* bb) {
+        if (bb != replace->bb() && !dom.dominates(replace->bb(), bb))
+            return;
+        for (auto& i : *bb) {
+            // First we need to find the position of the replacee, only after
+            // this instruction is in scope we should start replacing
+            if (!start) {
+                if (i == replace)
+                    start = true;
+                continue;
             }
-            if (!found && i == this)
-                found = true;
-            else if (found && i == stop)
+
+            bool changed = false;
+            i->eachArg([&](InstrArg& arg) {
+                if (arg.val() == this) {
+                    arg.val() = replace;
+                    changed = true;
+                }
+            });
+            if (changed)
+                i->updateTypeAndEffects();
+
+            // If we reach the original instruction we have to stop replacing.
+            // E.g. in  i->replaceReachableUses(j)
+            //
+            //   loop:
+            //     i = ...
+            //     i + 1
+            //     j = ...
+            //     j + 1
+            //     goto loop
+            //
+            // we better not replace the i in i + 1.
+            if (i == this)
                 return;
         }
-    } else {
-        apply(start);
-    }
+        assert(start);
+    });
 
-    if (start->next0)
-        apply(start->next0);
-    if (start->next1)
-        apply(start->next1);
+    // Propagate typefeedback
+    if (auto rep = Instruction::Cast(replace)) {
+        if (!rep->type.isA(typeFeedback) && rep->typeFeedback.isVoid())
+            rep->typeFeedback = typeFeedback;
+    }
+}
+
+void Instruction::replaceUsesIn(Value* replace, BB* start) {
+    checkReplace(this, replace);
+    Visitor::run(start, [&](BB* bb) {
+        for (auto& i : *bb) {
+            bool changed = false;
+            i->eachArg([&](InstrArg& arg) {
+                if (arg.val() == this) {
+                    arg.val() = replace;
+                    changed = true;
+                }
+            });
+            if (changed)
+                i->updateTypeAndEffects();
+        }
+    });
 
     // Propagate typefeedback
     if (auto rep = Instruction::Cast(replace)) {
@@ -264,18 +282,7 @@ void Instruction::replaceUsesWithLimits(Value* replace, BB* start,
 }
 
 void Instruction::replaceUsesWith(Value* replace) {
-    checkReplace(this, replace);
-    Visitor::run(bb(), [&](BB* bb) {
-        for (auto& i : *bb) {
-            replaceInOne(i, this, replace);
-        }
-    });
-
-    // Propagate typefeedback
-    if (auto rep = Instruction::Cast(replace)) {
-        if (!rep->type.isA(typeFeedback) && rep->typeFeedback.isVoid())
-            rep->typeFeedback = typeFeedback;
-    }
+    replaceUsesIn(replace, bb());
 }
 
 void Instruction::replaceUsesAndSwapWith(
@@ -374,6 +381,11 @@ void Branch::printArgs(std::ostream& out, bool tty) const {
         << bb()->falseBranch()->id << " (if false)";
 }
 
+void CastType::printArgs(std::ostream& out, bool tty) const {
+    out << (kind == Upcast ? "up " : "dn ");
+    FixedLenInstruction::printArgs(out, tty);
+}
+
 void Branch::printGraphArgs(std::ostream& out, bool tty) const {
     FixedLenInstruction::printArgs(out, tty);
 }
@@ -457,15 +469,6 @@ void IsType::printArgs(std::ostream& out, bool tty) const {
     out << " isA " << typeTest;
 }
 
-void Phi::updateType() {
-    type = arg(0).val()->type;
-    eachArg([&](BB*, Value* v) -> void { type = type | v->type; });
-    typeFeedback = arg(0).val()->type;
-    eachArg([&](BB*, Value* v) -> void {
-        typeFeedback = typeFeedback | v->typeFeedback;
-    });
-}
-
 void Phi::printArgs(std::ostream& out, bool tty) const {
     if (nargs() > 0) {
         for (size_t i = 0; i < nargs(); ++i) {
@@ -505,14 +508,16 @@ Instruction* BuiltinCallFactory::New(Value* callerEnv, SEXP builtin,
     bool noObj = true;
     for (auto a : args) {
         if (auto mk = MkArg::Cast(a)) {
-            if (mk->isEager()) {
-                if (mk->eagerArg()->type.maybeObj())
-                    noObj = false;
-                continue;
-            }
-        }
-        if (a->type.maybeObj())
+            if (mk->isEager())
+                if (!mk->eagerArg()->type.maybeObj())
+                    continue;
             noObj = false;
+            break;
+        }
+        if (a->type.maybeObj()) {
+            noObj = false;
+            break;
+        }
     }
 
     if (SafeBuiltinsList::always(builtin) ||
@@ -703,7 +708,7 @@ StaticCall::StaticCall(Value* callerEnv, Closure* cls,
     assert(fs);
     pushArg(fs, NativeType::frameState);
     for (unsigned i = 0; i < args.size(); ++i)
-        pushArg(args[i], RType::prom);
+        pushArg(args[i], PirType() | RType::prom | RType::missing);
     assert(tryDispatch());
 }
 
@@ -812,6 +817,7 @@ void Checkpoint::printGraphBranches(std::ostream& out, size_t bbId) const {
 }
 
 BB* Checkpoint::deoptBranch() { return bb()->falseBranch(); }
+BB* Checkpoint::nextBB() { return bb()->trueBranch(); }
 
 } // namespace pir
 } // namespace rir

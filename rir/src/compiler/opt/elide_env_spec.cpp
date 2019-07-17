@@ -5,6 +5,7 @@
 #include "../util/visitor.h"
 #include "R/r.h"
 #include "compiler/util/safe_builtins_list.h"
+#include "interpreter/builtins.h"
 #include "pass_definitions.h"
 
 #include <unordered_map>
@@ -20,10 +21,23 @@ void ElideEnvSpec::apply(RirCompiler&, ClosureVersion* function,
     auto nonObjectArgs = [&](Instruction* i) {
         auto answer = true;
         i->eachArg([&](Value* arg) {
+            if (!answer)
+                return;
+
             if (i->env() == arg)
                 return;
-            if (arg->type.maybeObj() &&
-                (arg->typeFeedback.isVoid() || arg->typeFeedback.maybeObj()))
+            if (!arg->followCastsAndForce()->type.maybeObj())
+                return;
+            if (arg->type.maybePromiseWrapped()) {
+                answer = false;
+                return;
+            }
+
+            auto fb = arg->typeFeedback;
+            if (fb.isVoid())
+                fb = arg->followCastsAndForce()->typeFeedback;
+
+            if (fb.isVoid() || fb.maybeObj())
                 answer = false;
         });
         return answer;
@@ -49,11 +63,10 @@ void ElideEnvSpec::apply(RirCompiler&, ClosureVersion* function,
                     return;
                 if (CallInstruction::CastCall(i)) {
                     if (auto bt = CallBuiltin::Cast(i)) {
-                        if (SafeBuiltinsList::forInline(bt->builtinId)) {
+                        // Calling a builtin materializes environment, except
+                        // for the fastcases
+                        if (supportsFastBuiltinCall(bt->blt))
                             return;
-                        }
-                        // reflective builtins will trigger deopt, so let's not
-                        // stub those environemtns
                     } else {
                         return;
                     }
@@ -82,6 +95,14 @@ void ElideEnvSpec::apply(RirCompiler&, ClosureVersion* function,
         }
     });
 
+    auto envOnlyForObj = [&](Instruction* i) {
+        if (i->envOnlyForObj())
+            return true;
+        if (auto blt = CallBuiltin::Cast(i))
+            if (SafeBuiltinsList::nonObject(blt->blt))
+                return true;
+        return false;
+    };
     VisitorNoDeoptBranch::run(function->entry, [&](BB* bb) {
         auto ip = bb->begin();
         while (ip != bb->end()) {
@@ -91,36 +112,66 @@ void ElideEnvSpec::apply(RirCompiler&, ClosureVersion* function,
             if (i->hasEnv()) {
                 // Speculatively elide environments on instructions in which
                 // all operators are primitive values
-                if (checkpoint.at(i) && i->envOnlyForObj() &&
-                    nonObjectArgs(i)) {
-                    i->elideEnv();
+                auto cp = checkpoint.at(i);
+                if (cp && envOnlyForObj(i) && nonObjectArgs(i)) {
                     i->eachArg([&](Value* arg) {
-                        if (arg != i->env())
-                            if (arg->type.maybeObj()) {
-                                auto condition = new IsObject(arg);
-                                ip = bb->insert(ip, condition);
-                                ip++;
-                                ip = bb->insert(
-                                    ip,
-                                    (new Assume(condition, checkpoint.at(i)))
-                                        ->Not());
-                                ip++;
-                            }
+                        if (arg == i->env() || !arg->type.maybeObj()) {
+                            return;
+                        }
+                        // TODO: deduplicate this code with type_speculation
+                        // pass
+                        assert(!arg->type.maybePromiseWrapped());
+                        PirType seen = arg->typeFeedback;
+                        if (seen.isVoid())
+                            seen = arg->followCastsAndForce()->typeFeedback;
+                        PirType resType;
+                        Instruction* condition = nullptr;
+                        bool assumeTrue = true;
+                        auto argi = Instruction::Cast(arg);
+                        if (argi && !seen.isVoid() &&
+                            (seen.isA(RType::integer) ||
+                             seen.isA(RType::real))) {
+                            resType = seen;
+                            condition = new IsType(seen, arg);
+                        } else {
+                            condition = new IsObject(arg);
+                            assumeTrue = false;
+                            resType = arg->type.notObject();
+                        }
+
+                        BBTransform::insertAssume(condition, cp, bb, ip,
+                                                  assumeTrue);
+
+                        if (argi) {
+                            auto cast = new CastType(argi, CastType::Downcast,
+                                                     PirType::val(), resType);
+                            ip = bb->insert(ip, cast);
+                            ip++;
+                            argi->replaceDominatedUses(cast);
+                        }
                     });
+                    if (auto blt = CallBuiltin::Cast(i)) {
+                        std::vector<Value*> args;
+                        blt->eachCallArg([&](Value* v) { args.push_back(v); });
+                        auto safe =
+                            new CallSafeBuiltin(blt->blt, args, blt->srcIdx);
+                        blt->replaceUsesWith(safe);
+                        bb->replace(ip, safe);
+                    } else {
+                        i->elideEnv();
+                    }
+                    i->updateTypeAndEffects();
                     next = ip + 1;
-                    i->type.setNotObject();
-                    i->effects.reset(Effect::Reflection);
-                    i->type = i->type.forced();
                 } else if (checks.count(i)) {
                     // Speculatively elide instructions that only require them
-                    // in
-                    // case they access promises reflectively
+                    // in case they access promises reflectively
                     if (!bannedEnvs.count(i->env())) {
                         auto env = checks[i].second;
                         env->stub = true;
                         auto cp = checks[i].first;
                         auto condition = new IsEnvStub(env);
                         BBTransform::insertAssume(condition, cp, true);
+                        assert(cp->bb()->trueBranch() != bb);
                     }
                 }
             }

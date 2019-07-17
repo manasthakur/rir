@@ -224,8 +224,9 @@ class TheInliner {
                                                           ->type.forced()
                                                           .orPromiseWrapped()
                                                     : ld->type;
-                                    auto cast = new CastType(a, RType::prom,
-                                                             type.notMissing());
+                                    auto cast = new CastType(
+                                        a, CastType::Upcast, RType::prom,
+                                        type.notMissing());
                                     ip = bb->insert(ip + 1, cast);
                                     ip--;
                                     a = cast;
@@ -266,7 +267,7 @@ class TheInliner {
                                         version->promises().at(newPromId[id]));
                                 } else {
                                     Promise* clone = version->createProm(
-                                        mk->prom()->srcPoolIdx());
+                                        mk->prom()->rirSrc());
                                     BB* promCopy = BBTransform::clone(
                                         mk->prom()->entry, clone, version);
                                     clone->entry = promCopy;

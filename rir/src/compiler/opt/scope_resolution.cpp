@@ -1,6 +1,7 @@
 #include "../analysis/query.h"
 #include "../analysis/scope.h"
 #include "../pir/pir_impl.h"
+#include "../transform/bb.h"
 #include "../util/cfg.h"
 #include "../util/phi_placement.h"
 #include "../util/safe_builtins_list.h"
@@ -212,7 +213,7 @@ class TheScopeResolution {
             }
 
             for (auto& phi : thePhis)
-                phi.second->updateType();
+                phi.second->updateTypeAndEffects();
 
             return thePhis.at(pl.targetPhiPosition);
         };
@@ -275,17 +276,22 @@ class TheScopeResolution {
 
                 // StVarSuper where the parent environment is known and
                 // local, can be replaced by simple StVar, if the variable
-                // exists in the super env.
+                // exists in the super env. Or if the super env is the global
+                // env, since super assign never goes beyond that one.
                 if (auto sts = StVarSuper::Cast(i)) {
                     auto aLoad =
                         analysis.superLoad(before, sts->varName, sts->env());
-                    if (aLoad.env != AbstractREnvironment::UnknownParent &&
-                        !aLoad.result.isUnknown() &&
-                        aLoad.env->validIn(function)) {
-                        auto r = new StVar(sts->varName, sts->val(), aLoad.env);
-                        bb->replace(ip, r);
-                        sts->replaceUsesWith(r);
-                        replacedValue[sts] = r;
+                    if (aLoad.env != AbstractREnvironment::UnknownParent) {
+                        auto env = Env::Cast(aLoad.env);
+                        if ((env && env->rho == R_GlobalEnv) ||
+                            (!aLoad.result.isUnknown() &&
+                             aLoad.env->validIn(function))) {
+                            auto r =
+                                new StVar(sts->varName, sts->val(), aLoad.env);
+                            bb->replace(ip, r);
+                            sts->replaceUsesWith(r);
+                            replacedValue[sts] = r;
+                        }
                     }
                     ip = next;
                     continue;
@@ -333,11 +339,10 @@ class TheScopeResolution {
                 if (bb->isDeopt()) {
                     if (auto fs = FrameState::Cast(i)) {
                         if (auto mk = MkEnv::Cast(fs->env())) {
-                            if (mk->context == 1 && !mk->stub &&
-                                mk->bb() != bb &&
-                                mk->usesAreOnly(
-                                    function->entry,
-                                    {Tag::FrameState, Tag::StVar})) {
+                            if (mk->context == 1 && mk->bb() != bb &&
+                                mk->usesAreOnly(function->entry,
+                                                {Tag::FrameState, Tag::StVar,
+                                                 Tag::IsEnvStub})) {
                                 analysis.tryMaterializeEnv(
                                     before, mk,
                                     [&](const std::unordered_map<
@@ -365,7 +370,7 @@ class TheScopeResolution {
                                         ip = bb->insert(ip, deoptEnv);
                                         ip++;
                                         next = ip + 1;
-                                        mk->replaceUsesWithLimits(deoptEnv, bb);
+                                        mk->replaceDominatedUses(deoptEnv);
                                     });
                             }
                         }
@@ -510,6 +515,7 @@ class TheScopeResolution {
                         i->env(aLoad.env);
                 });
 
+                // TODO move this to a pass where it fits...
                 if (auto b = CallBuiltin::Cast(i)) {
                     bool noObjects = true;
                     i->eachArg([&](Value* v) {
@@ -552,6 +558,22 @@ void ScopeResolution::apply(RirCompiler&, ClosureVersion* function,
                             LogStream& log) const {
     TheScopeResolution s(function, log);
     s();
+
+    // Scope resolution can sometimes generate dead phis, so we remove them
+    // here, before they cause errors in later compiler passes. (Sometimes, the
+    // verifier will even catch these errors, but then segfault when trying to
+    // print the offending instruction.)
+    //
+    // This happens because we use the standard phi placement algorithm but in
+    // a different setting. The algorithm assumes it is examining the whole
+    // program and inserting phis for all writes. In our setting, we want to
+    // connect LdVars with StVars, replacing the LdVar with a phi if multiple
+    // stores reach that load.
+    //
+    // However, if there is no LdVar to replace, that means the phi is dead;
+    // none of the successor instructions needs that value. The problem is when
+    // dead phis are malformed.
+    BBTransform::removeDeadInstrs(function);
 }
 
 } // namespace pir

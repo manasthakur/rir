@@ -37,11 +37,11 @@ void AbstractREnvironment::print(std::ostream& out, bool tty) const {
     if (tainted)
         out << "* tainted\n";
 
-    for (auto e : entries) {
-        SEXP name = std::get<0>(e);
+    for (const auto& entry : entries) {
+        auto& name = entry.first;
+        auto& val = entry.second;
         out << "   " << CHAR(PRINTNAME(name)) << " -> ";
-        AbstractPirValue v = std::get<1>(e);
-        v.print(out);
+        val.print(out);
         out << "\n";
     }
 }
@@ -59,15 +59,24 @@ AbstractResult AbstractPirValue::merge(const AbstractPirValue& other) {
     }
 
     bool changed = false;
-    if (!std::includes(vals.begin(), vals.end(), other.vals.begin(),
-                       other.vals.end())) {
-        vals.insert(other.vals.begin(), other.vals.end());
-        changed = true;
+    for (const auto& e : other.vals) {
+        if (!vals.includes(e)) {
+            vals.insert(e);
+            changed = true;
+            if (vals.size() > MAX_VALS) {
+                taint();
+                break;
+            }
+        }
     }
-    changed = type.merge(other.type) || changed;
+    auto old = type;
+    type = type | other.type;
+    changed = changed || old != type;
 
     return changed ? AbstractResult::Updated : AbstractResult::None;
 }
+
+size_t constexpr AbstractPirValue::MAX_VALS;
 
 void AbstractPirValue::print(std::ostream& out, bool tty) const {
     if (unknown) {
@@ -120,15 +129,21 @@ AbstractLoad AbstractREnvironmentHierarchy::get(Value* env, SEXP e) const {
         env = aliases.at(env);
     while (env != AbstractREnvironment::UnknownParent) {
         assert(env);
-        if (envs.count(env) == 0)
+        if (envs.count(env) == 0) {
             return AbstractLoad(env, AbstractPirValue::tainted());
+        }
         auto aenv = envs.at(env);
-        if (!aenv.absent(e)) {
+        // In the case of existing R envs we only have a partial view (ie. we
+        // don't see all stores happening before entering the current function,
+        // therefore we cannot practically exclude the existence of a
+        // bindinging in those environments).
+        if (Env::Cast(env) || !aenv.absent(e)) {
             const AbstractPirValue& res = aenv.get(e);
             // UnboundValue has fall-through semantics which cause lookup to
             // fall through.
             if (res.maybeUnboundValue())
-                return AbstractLoad(env, AbstractPirValue::tainted());
+                return AbstractLoad(AbstractREnvironment::UnknownParent,
+                                    AbstractPirValue::tainted());
             if (!res.isUnboundValue())
                 return AbstractLoad(env, res);
         }

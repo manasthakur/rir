@@ -32,6 +32,7 @@ void printEffects(std::ostream& out, Effects effects) {
             CASE(LeaksEnv, "L")
             CASE(TriggerDeopt, "D")
             CASE(ExecuteCode, "X")
+            CASE(DependsOnAssume, "d")
 #undef CASE
         default:
             assert(false);

@@ -60,20 +60,24 @@ void HoistInstruction::apply(RirCompiler& cmp, ClosureVersion* function,
                 Tag::Phi,
                 // promises are modified by force, moving them is tricky
                 Tag::MkArg,
+                // these stay in deopt branches
+                Tag::FrameState,
             };
 
-            if (!i->effects.empty() || i->branchOrExit() ||
-                blacklist.count(i->tag))
+            bool hasEffects = !i->effects.empty();
+            if (hasEffects || i->branchOrExit() || blacklist.count(i->tag))
                 if (!whitelist.count(i->tag)) {
                     ip = next;
                     continue;
                 }
 
+            bool onlyDependsOnAssume =
+                !hasEffects && i->effects.contains(Effect::DependsOnAssume);
+
             BB* target = nullptr;
             {
                 bool success = true;
                 i->eachArg([&](Value* a) {
-                    // cppcheck-suppress knownConditionTrueFalse
                     if (!success)
                         return;
 
@@ -83,7 +87,6 @@ void HoistInstruction::apply(RirCompiler& cmp, ClosureVersion* function,
 
                     // Try to find a hoisting candidate that is dominated by all
                     // arguments to i
-                    // cppcheck-suppress knownConditionTrueFalse
                     if (!target)
                         target = arg->bb();
                     if (target != arg->bb()) {
@@ -140,8 +143,12 @@ void HoistInstruction::apply(RirCompiler& cmp, ClosureVersion* function,
                     }
 
                     for (auto& j : *bb)
-                        if (j->hasStrongEffects())
+                        if (onlyDependsOnAssume) {
+                            if (Assume::Cast(j))
+                                return false;
+                        } else if (j->hasStrongEffects()) {
                             return false;
+                        }
 
                     return compute(x->next0) && compute(x->next1);
                 };
@@ -171,7 +178,7 @@ void HoistInstruction::apply(RirCompiler& cmp, ClosureVersion* function,
             };
 
             bool success = true;
-            if (i->hasObservableEffects())
+            if (hasEffects)
                 success = doesNotReorderEffects(target);
             else if (i->cost() > 0)
                 success = noUnneccessaryComputation(target, 1);

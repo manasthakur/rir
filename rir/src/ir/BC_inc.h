@@ -168,7 +168,10 @@ class BC {
         ObservedSafe safeFeedback;
         PoolAndCachePositionRange poolAndCache;
         CachePositionRange cacheIdx;
-        ImmediateArguments() { memset(this, 0, sizeof(ImmediateArguments)); }
+        ImmediateArguments() {
+            memset(reinterpret_cast<void*>(this), 0,
+                   sizeof(ImmediateArguments));
+        }
     };
 
     static Immediate readImmediate(Opcode** pc) {
@@ -284,14 +287,16 @@ class BC {
 
     bool hasPromargs() const {
         return bc == Opcode::call_implicit_ ||
-               bc == Opcode::named_call_implicit_ || bc == Opcode::promise_ ||
+               bc == Opcode::named_call_implicit_ ||
+               bc == Opcode::mk_promise_ || bc == Opcode::mk_eager_promise_ ||
                bc == Opcode::push_code_;
     }
 
     void addMyPromArgsTo(std::vector<FunIdx>& proms) {
         switch (bc) {
         case Opcode::push_code_:
-        case Opcode::promise_:
+        case Opcode::mk_promise_:
+        case Opcode::mk_eager_promise_:
             proms.push_back(immediate.arg_idx);
             break;
         case Opcode::named_call_implicit_:
@@ -394,7 +399,8 @@ BC_NOARGS(V, _)
     inline static BC ldloc(uint32_t offset);
     inline static BC stloc(uint32_t offset);
     inline static BC copyloc(uint32_t target, uint32_t source);
-    inline static BC promise(FunIdx prom);
+    inline static BC mkPromise(FunIdx prom);
+    inline static BC mkEagerPromise(FunIdx prom);
     inline static BC starg(SEXP sym);
     inline static BC stvarStubbed(unsigned stubbed);
     inline static BC stvar(SEXP sym);
@@ -458,7 +464,9 @@ BC_NOARGS(V, _)
     // objects extra pool. Or for the variable length call bytecodes we need a
     // vector to store arguments. For those bytecodes we allocate an extra
     // information struct to hold those things.
-    struct ExtraInformation {};
+    struct ExtraInformation {
+        virtual ~ExtraInformation() {}
+    };
     struct CallInstructionExtraInformation : public ExtraInformation {
         std::vector<BC::ArgIdx> immediateCallArguments;
         std::vector<BC::PoolIdx> callArgumentNames;
@@ -682,13 +690,14 @@ BC_NOARGS(V, _)
                    sizeof(CallBuiltinFixedArgs));
             break;
         case Opcode::static_call_:
-            memcpy(&immediate.staticCallFixedArgs, pc,
+            memcpy(reinterpret_cast<void*>(&immediate.staticCallFixedArgs), pc,
                    sizeof(StaticCallFixedArgs));
             break;
         case Opcode::guard_fun_:
             memcpy(&immediate.guard_fun_args, pc, sizeof(GuardFunArgs));
             break;
-        case Opcode::promise_:
+        case Opcode::mk_promise_:
+        case Opcode::mk_eager_promise_:
         case Opcode::push_code_:
             memcpy(&immediate.fun, pc, sizeof(FunIdx));
             break;
@@ -724,7 +733,8 @@ BC_NOARGS(V, _)
             memcpy(&immediate.callFeedback, pc, sizeof(ObservedCallees));
             break;
         case Opcode::record_type_:
-            memcpy(&immediate.typeFeedback, pc, sizeof(ObservedValues));
+            memcpy(reinterpret_cast<void*>(&immediate.typeFeedback), pc,
+                   sizeof(ObservedValues));
             break;
 #define V(NESTED, name, name_) case Opcode::name_##_:
 BC_NOARGS(V, _)
