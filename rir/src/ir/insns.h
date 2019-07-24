@@ -226,8 +226,8 @@ DEF_INSTR(isfun_, 0, 1, 1, true)
  * promise_:: take immediate CP index of Code, create promise & push on object
  * stack
  */
-DEF_INSTR(mk_eager_promise_, 1, 1, 1, 1)
-DEF_INSTR(mk_promise_, 1, 0, 1, 1)
+DEF_INSTR(mk_eager_promise_, 1, 1, 1, true)
+DEF_INSTR(mk_promise_, 1, 0, 1, true)
 
 /**
  * force_:: pop from objet stack, evaluate, push promise's value

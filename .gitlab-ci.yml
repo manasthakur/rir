@@ -68,7 +68,7 @@ test_release:
   script:
     - cd /opt/rir/build/release
     - RIR_CHECK_PIR_TYPES=1 bin/tests
-    - PIR_PARAMETER_BLACKLIST="Sandbox" RIR_CHECK_PIR_TYPES=1 bin/gnur-make-tests check-all
+    - PIR_DISABLE_SANDBOX=1 RIR_CHECK_PIR_TYPES=1 bin/gnur-make-tests check-all
     - RIR_CHECK_PIR_TYPES=1 bin/gnur-make-tests check-all
     - ../../tools/check-gnur-make-tests-error
 

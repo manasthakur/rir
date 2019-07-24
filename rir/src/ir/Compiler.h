@@ -40,8 +40,9 @@ class Compiler {
     }
 
   public:
-    static bool profile;
     static bool unsoundOpts;
+    static bool profile;
+    static bool sandbox;
     SEXP finalize();
 
     static SEXP compileExpression(SEXP ast) {

@@ -334,7 +334,7 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
          fun == symbol::Eq || fun == symbol::Ne ||
          fun == symbol::Colon)) {
         emitGuardForNamePrimitive(cs, fun);
-        
+
         compileExpr(ctx, args[0]);
         compileExpr(ctx, args[1]);
 
@@ -573,7 +573,7 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
         // The ldvarForUpdate BC increments the named count if the target is
         // not local to the current environment.
 
-        if (Compiler::profile)
+        if (Compiler::sandbox && Compiler::profile)
             cs << BC::beginSandboxRecord();
 
         if (superAssign) {
@@ -588,7 +588,8 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_, bo
 
         if (Compiler::profile) {
             cs << BC::recordType();
-            cs << BC::endSandboxRecord();
+            if (Compiler::sandbox)
+                cs << BC::endSandboxRecord();
         }
 
         // And index
@@ -1124,7 +1125,7 @@ void compileGetvar(CompilerContext& ctx, SEXP name, bool needsVisible = true) {
     } else if (name == R_MissingArg) {
         cs << BC::push(R_MissingArg);
     } else {
-        if (Compiler::profile)
+        if (Compiler::sandbox && Compiler::profile)
             cs << BC::beginSandboxRecord();
         if (ctx.code.top()->isCached(name))
             cs << BC::ldvarCached(name, ctx.code.top()->cacheSlotFor(name));
@@ -1132,7 +1133,8 @@ void compileGetvar(CompilerContext& ctx, SEXP name, bool needsVisible = true) {
             cs << BC::ldvar(name);
         if (Compiler::profile) {
             cs << BC::recordType();
-            cs << BC::endSandboxRecord();
+            if (Compiler::sandbox)
+                cs << BC::endSandboxRecord();
         }
     }
     if (needsVisible)
@@ -1235,5 +1237,8 @@ bool Compiler::unsoundOpts =
 bool Compiler::profile =
     !(getenv("RIR_PROFILING") &&
       std::string(getenv("RIR_PROFILING")).compare("off") == 0);
+
+bool Compiler::sandbox =
+    getenv("PIR_DISABLE_SANDBOX") && (bool)atoi(getenv("PIR_DISABLE_SANDBOX"));
 
 } // namespace rir

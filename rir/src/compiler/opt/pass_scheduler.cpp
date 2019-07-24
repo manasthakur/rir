@@ -1,4 +1,5 @@
 #include "pass_scheduler.h"
+#include "../parameter.h"
 #include "pass_definitions.h"
 
 namespace rir {

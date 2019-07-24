@@ -907,7 +907,7 @@ BEGIN_MACHINE {
         NEXT();
     }
 
-    INSTRUCTION(mk_eager_promise_) {
+    IMPURE_INSTRUCTION(mk_eager_promise_) {
         Immediate id = readImmediate();
         advanceImmediate();
         SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);
@@ -916,7 +916,7 @@ BEGIN_MACHINE {
         NEXT();
     }
 
-    INSTRUCTION(mk_promise_) {
+    IMPURE_INSTRUCTION(mk_promise_) {
         Immediate id = readImmediate();
         advanceImmediate();
         SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);

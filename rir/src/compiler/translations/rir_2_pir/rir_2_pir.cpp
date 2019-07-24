@@ -1,6 +1,7 @@
 #include "rir_2_pir.h"
 #include "../../analysis/query.h"
 #include "../../analysis/verifier.h"
+#include "../../parameter.h"
 #include "../../pir/pir_impl.h"
 #include "../../transform/insert_cast.h"
 #include "../../util/ConvertAssumptions.h"
