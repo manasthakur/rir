@@ -1238,7 +1238,7 @@ bool Compiler::profile =
     !(getenv("RIR_PROFILING") &&
       std::string(getenv("RIR_PROFILING")).compare("off") == 0);
 
-bool Compiler::sandbox =
-    getenv("PIR_DISABLE_SANDBOX") && (bool)atoi(getenv("PIR_DISABLE_SANDBOX"));
+bool Compiler::sandbox = !(getenv("PIR_DISABLE_SANDBOX") &&
+                           (bool)atoi(getenv("PIR_DISABLE_SANDBOX")));
 
 } // namespace rir

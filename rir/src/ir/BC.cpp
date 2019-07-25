@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "CodeStream.h"
+#include "Compiler.h"
 #include "R/Funtab.h"
 #include "R/Printing.h"
 #include "R/RList.h"
@@ -720,7 +721,7 @@ int BC::moveBeforeDeopt() {
     case Opcode::ldvar_super_:
     case Opcode::ldvar_cached_:
     case Opcode::ldvar_for_update_cache_:
-        return 1; // before begin_sandbox_record_
+        return Compiler::sandbox ? 1 : 0; // before begin_sandbox_record_
     default:
         return 0;
     }
