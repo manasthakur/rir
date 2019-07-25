@@ -954,7 +954,17 @@ BEGIN_MACHINE {
                 res = val;
             }
             ostack_push(ctx, res);
+        } else if (STALE(ostack_top(ctx))) {
+            // This is an old forced promise reused in a loop, which might've
+            // came from a variable that was updated. Ideally, PIR should hoist
+            // the force over the loop start (TODO implement this). For now we
+            // can just break the sandbox, which will make the function
+            // deoptimize and then recompile where this force isn't sandboxed
+            // (this avoids the problem).
+            succeed = false;
         }
+        if (succeed)
+            SET_STALE(ostack_top(ctx), 1);
 #if PRINT_SANDBOX
         if (succeed)
             std::cout << "** sandbox success\n";

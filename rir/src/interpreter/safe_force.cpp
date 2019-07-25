@@ -143,7 +143,6 @@ SEXP rirForcePromise(SEXP e, InterpreterInstance* ctx, SandboxMode mode) {
     R_PendingPromises = &prstack;
 
     // The original code is eval(PRCODE(e), PRENV(e))
-    //
     val = promiseEval(PRCODE(e), PRENV(e), ctx, mode);
 
     /* Pop the stack, unmark the promise and set its value field.
