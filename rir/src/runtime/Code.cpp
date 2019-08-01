@@ -80,6 +80,7 @@ Code* Code::deserialize(SEXP refTable, R_inpstream_t inp) {
     size_t size = InInteger(inp);
     Code* code = (Code*)::operator new(size);
     code->uid = UUID::deserialize(refTable, inp) ^ uidHash;
+    code->nativeCode = nullptr; // not serialized for now
     code->funInvocationCount = InInteger(inp);
     code->src = InInteger(inp);
     code->stackLength = InInteger(inp);
@@ -104,7 +105,7 @@ Code* Code::deserialize(SEXP refTable, R_inpstream_t inp) {
     memcpy(DATAPTR(store), code, size);
     Code* old = code;
     code = (Code*)DATAPTR(store);
-    delete old;
+    ::operator delete(old);
     code->info = {// GC area starts just after the header
                   (uint32_t)((intptr_t)&code->locals_ - (intptr_t)code),
                   // GC area has only 1 pointer
@@ -185,8 +186,6 @@ void Code::disassemble(std::ostream& out, const std::string& prefix) const {
 
         // Print call ast
         switch (bc.bc) {
-        case Opcode::call_implicit_:
-        case Opcode::named_call_implicit_:
         case Opcode::call_:
         case Opcode::named_call_:
             out << "   ; "
@@ -217,8 +216,6 @@ void Code::disassemble(std::ostream& out, const std::string& prefix) const {
     }
 
     for (auto i : promises) {
-        if (i == MISSING_ARG_IDX || i == DOTS_ARG_IDX)
-            continue;
         auto c = getPromise(i);
         out << "\n[Prom (index " << prefix << i << ")]\n";
         std::stringstream ss;

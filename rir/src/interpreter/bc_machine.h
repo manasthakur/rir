@@ -1,33 +1,9 @@
 assert(env != symbol::delayedEnv || (callCtxt != nullptr));
 
 if (c->nativeCode) {
-    if (callCtxt && !callCtxt->hasStackArgs() && !callCtxt->hasNames()) {
-        assert(!LazyEnvironment::check(callCtxt->callerEnv));
-        void* stackBase = R_BCNodeStackTop;
-        for (size_t i = 0; i < callCtxt->suppliedArgs; ++i) {
-            if (callCtxt->missingArg(i)) {
-                ostack_push(ctx, R_MissingArg);
-            } else {
-                auto arg = callCtxt->implicitArg(i);
-                auto prom = createPromise(arg, callCtxt->callerEnv);
-                ostack_push(ctx, prom);
-                if (callCtxt->givenAssumptions.isEager(i)) {
-                    promiseValue(prom, ctx);
-                }
-            }
-        }
-        auto res = c->nativeCode(c, ctx, stackBase, env, callCtxt->callee);
-        ostack_popn(ctx, callCtxt->suppliedArgs);
-        return res;
-    }
-    if (!callCtxt || callCtxt->hasStackArgs()) {
-        return c->nativeCode(c, ctx,
-                             callCtxt ? (void*)callCtxt->stackArgs : nullptr,
-                             env, callCtxt ? callCtxt->callee : nullptr);
-    }
-    // TODO: figure out how to create some adapter frame here. If we fix the
-    // fall through case, we don't have to emit rir bytecode as fallback
-    // anymore...
+    return c->nativeCode(c, ctx,
+                         callCtxt ? (void*)callCtxt->stackArgs : nullptr, env,
+                         callCtxt ? callCtxt->callee : nullptr);
 }
 
 #ifdef THREADED_CODE
@@ -82,15 +58,39 @@ SEXP res;
 auto changeEnv = [&](SEXP e) {
     assert((TYPEOF(e) == ENVSXP || LazyEnvironment::check(e)) &&
            "Expected an environment");
+    assert(!LazyEnvironment::check(e) ||
+           !LazyEnvironment::check(e)->materialized());
     if (e != env)
         env = e;
 };
+
+// This is used in loads for recording if the loaded value was a promise
+// and if it was forced. Looks at the next instruction, if it's a force,
+// marks how this load behaved.
+auto recordForceBehavior = [&](SEXP s) {
+    // Bail if this load not recorded or we are in already optimized code
+    if (*pc != Opcode::record_type_)
+        return;
+
+    ObservedValues::StateBeforeLastForce state =
+        ObservedValues::StateBeforeLastForce::unknown;
+    if (TYPEOF(s) != PROMSXP)
+        state = ObservedValues::StateBeforeLastForce::value;
+    else if (PRVALUE(s) != R_UnboundValue)
+        state = ObservedValues::StateBeforeLastForce::evaluatedPromise;
+    else
+        state = ObservedValues::StateBeforeLastForce::promise;
+
+    ObservedValues* feedback = (ObservedValues*)(pc + 1);
+    if (feedback->stateBeforeLastForce < state)
+        feedback->stateBeforeLastForce = state;
+};
+
 R_Visible = TRUE;
 
 checkUserInterrupt();
 
 // main loop
-
 BEGIN_MACHINE {
 
     PURE_INSTRUCTION(invalid_) assert(false && "wrong or unimplemented opcode");
@@ -208,12 +208,9 @@ BEGIN_MACHINE {
         SEXP parent = ostack_pop(ctx);
         assert(TYPEOF(parent) == ENVSXP &&
                "Non-environment used as environment parent.");
-        auto names = pc;
+        auto names = (Immediate*)pc;
         advanceImmediateN(n);
-        SEXP wrapper = Rf_allocVector(EXTERNALSXP, sizeof(LazyEnvironment) +
-                                                       sizeof(SEXP) * (n + 1));
-        new (DATAPTR(wrapper))
-            LazyEnvironment(parent, (Immediate*)names, n, localsBase, ctx);
+        SEXP wrapper = LazyEnvironment::New(parent, n, names)->container();
 
         ostack_push(ctx, wrapper);
         if (contextPos > 0) {
@@ -299,6 +296,7 @@ BEGIN_MACHINE {
         }
 
         // if promise, evaluate & return
+        recordForceBehavior(res);
         if (TYPEOF(res) == PROMSXP) {
             FORCE_PROMISE(res, ctx);
         }
@@ -340,6 +338,7 @@ BEGIN_MACHINE {
         }
 
         // if promise, evaluate & return
+        recordForceBehavior(res);
         if (TYPEOF(res) == PROMSXP) {
             FORCE_PROMISE(res, ctx);
         }
@@ -384,6 +383,7 @@ BEGIN_MACHINE {
         advanceImmediate();
         res = Rf_findVar(sym, env);
 
+        recordForceBehavior(res);
         if (res == R_UnboundValue) {
             Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
         } else if (res == R_MissingArg) {
@@ -408,6 +408,7 @@ BEGIN_MACHINE {
         advanceImmediate();
         res = cachedGetVar(env, id, cacheIndex, ctx, bindingCache);
 
+        recordForceBehavior(res);
         if (res == R_UnboundValue) {
             SEXP sym = cp_pool_at(ctx, id);
             Rf_error("object \"%s\" not found", CHAR(PRINTNAME(sym)));
@@ -484,6 +485,7 @@ BEGIN_MACHINE {
         }
 
         // if promise, evaluate & return
+        recordForceBehavior(res);
         if (TYPEOF(res) == PROMSXP) {
             FORCE_PROMISE(res, ctx);
         }
@@ -527,6 +529,7 @@ BEGIN_MACHINE {
         }
 
         // if promise, evaluate & return
+        recordForceBehavior(res);
         if (TYPEOF(res) == PROMSXP) {
             FORCE_PROMISE(res, ctx);
         }
@@ -543,18 +546,7 @@ BEGIN_MACHINE {
         advanceImmediate();
         assert(callCtxt);
 
-        if (callCtxt->hasStackArgs()) {
-            ostack_push(ctx, callCtxt->stackArg(idx));
-        } else {
-            if (callCtxt->missingArg(idx)) {
-                res = R_MissingArg;
-            } else {
-                Code* arg = callCtxt->implicitArg(idx);
-                assert(!LazyEnvironment::check(callCtxt->callerEnv));
-                res = createPromise(arg, callCtxt->callerEnv);
-            }
-            ostack_push(ctx, res);
-        }
+        ostack_push(ctx, callCtxt->stackArg(idx));
         NEXT();
     }
 
@@ -673,35 +665,6 @@ BEGIN_MACHINE {
         NEXT();
     }
 
-    IMPURE_INSTRUCTION(named_call_implicit_) {
-#ifdef ENABLE_SLOWASSERT
-        auto lll = ostack_length(ctx);
-        int ttt = R_PPStackTop;
-#endif
-
-        // Callee is TOS
-        // Arguments and names are immediate given as promise code indices.
-        size_t n = readImmediate();
-        advanceImmediate();
-        size_t ast = readImmediate();
-        advanceImmediate();
-        Assumptions given(pc);
-        pc += sizeof(Assumptions);
-        auto arguments = (Immediate*)pc;
-        advanceImmediateN(n);
-        auto names = (Immediate*)pc;
-        advanceImmediateN(n);
-        CallContext call(c, ostack_top(ctx), n, ast, arguments, names, env,
-                         given, ctx);
-        res = doCall(call, ctx);
-        ostack_pop(ctx); // callee
-        ostack_push(ctx, res);
-
-        SLOWASSERT(ttt == R_PPStackTop);
-        SLOWASSERT(lll == ostack_length(ctx));
-        NEXT();
-    }
-
     PURE_INSTRUCTION(record_call_) {
         ObservedCallees* feedback = (ObservedCallees*)pc;
         SEXP callee = ostack_top(ctx);
@@ -715,33 +678,6 @@ BEGIN_MACHINE {
         SEXP t = ostack_top(ctx);
         feedback->record(t);
         pc += sizeof(ObservedValues);
-        NEXT();
-    }
-
-    IMPURE_INSTRUCTION(call_implicit_) {
-#ifdef ENABLE_SLOWASSERT
-        auto lll = ostack_length(ctx);
-        int ttt = R_PPStackTop;
-#endif
-
-        // Callee is TOS
-        // Arguments are immediate given as promise code indices.
-        size_t n = readImmediate();
-        advanceImmediate();
-        size_t ast = readImmediate();
-        advanceImmediate();
-        Assumptions given(pc);
-        pc += sizeof(Assumptions);
-        auto arguments = (Immediate*)pc;
-        advanceImmediateN(n);
-        CallContext call(c, ostack_top(ctx), n, ast, arguments, env, given,
-                         ctx);
-        res = doCall(call, ctx);
-        ostack_pop(ctx); // callee
-        ostack_push(ctx, res);
-
-        SLOWASSERT(ttt == R_PPStackTop);
-        SLOWASSERT(lll == ostack_length(ctx));
         NEXT();
     }
 
@@ -792,6 +728,34 @@ BEGIN_MACHINE {
 
         SLOWASSERT(ttt == R_PPStackTop);
         SLOWASSERT(lll - call.suppliedArgs == (unsigned)ostack_length(ctx));
+        NEXT();
+    }
+
+    IMPURE_INSTRUCTION(call_dots_) {
+#ifdef ENABLE_SLOWASSERT
+        int ttt = R_PPStackTop;
+#endif
+
+        // Stack contains [callee, arg1, ..., argn]
+        Immediate n = readImmediate();
+        advanceImmediate();
+        size_t ast = readImmediate();
+        advanceImmediate();
+        Assumptions given(pc);
+        pc += sizeof(Assumptions);
+        auto names_ = (Immediate*)pc;
+        advanceImmediateN(n);
+
+        n = expandDotDotDotCallArgs(ctx, n, names_, env);
+        auto namesStore = ostack_at(ctx, n);
+        CallContext call(c, ostack_at(ctx, n + 1), n, ast,
+                         ostack_cell_at(ctx, n - 1),
+                         (Immediate*)DATAPTR(namesStore), env, given, ctx);
+        res = doCall(call, ctx);
+        ostack_popn(ctx, call.passedArgs + 2);
+        ostack_push(ctx, res);
+
+        SLOWASSERT(ttt == R_PPStackTop);
         NEXT();
     }
 
@@ -911,7 +875,9 @@ BEGIN_MACHINE {
         Immediate id = readImmediate();
         advanceImmediate();
         SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);
-        SET_PRVALUE(prom, ostack_pop(ctx));
+        SEXP val = ostack_pop(ctx);
+        ENSURE_NAMEDMAX(val);
+        SET_PRVALUE(prom, val);
         ostack_push(ctx, prom);
         NEXT();
     }
@@ -1076,13 +1042,13 @@ BEGIN_MACHINE {
     IMPURE_INSTRUCTION(add_) {
         SEXP lhs = ostack_at(ctx, 1);
         SEXP rhs = ostack_at(ctx, 0);
-        DO_BINOP(+, PLUSOP);
+        DO_BINOP(+, Binop::PLUSOP);
         NEXT();
     }
 
     IMPURE_INSTRUCTION(uplus_) {
         SEXP val = ostack_at(ctx, 0);
-        DO_UNOP(+, PLUSOP);
+        DO_UNOP(+, Unop::PLUSOP);
         NEXT();
     }
 
@@ -1119,20 +1085,20 @@ BEGIN_MACHINE {
     IMPURE_INSTRUCTION(sub_) {
         SEXP lhs = ostack_at(ctx, 1);
         SEXP rhs = ostack_at(ctx, 0);
-        DO_BINOP(-, MINUSOP);
+        DO_BINOP(-, Binop::MINUSOP);
         NEXT();
     }
 
     IMPURE_INSTRUCTION(uminus_) {
         SEXP val = ostack_at(ctx, 0);
-        DO_UNOP(-, MINUSOP);
+        DO_UNOP(-, Unop::MINUSOP);
         NEXT();
     }
 
     IMPURE_INSTRUCTION(mul_) {
         SEXP lhs = ostack_at(ctx, 1);
         SEXP rhs = ostack_at(ctx, 0);
-        DO_BINOP(*, TIMESOP);
+        DO_BINOP(*, Binop::TIMESOP);
         NEXT();
     }
 
@@ -1221,15 +1187,15 @@ BEGIN_MACHINE {
         SEXP rhs = ostack_at(ctx, 0);
 
         if (IS_SIMPLE_SCALAR(lhs, REALSXP) && IS_SIMPLE_SCALAR(rhs, REALSXP)) {
-            double real_res = myfmod(ctx, *REAL(lhs), *REAL(rhs));
+            double real_res = myfmod(*REAL(lhs), *REAL(rhs));
             STORE_BINOP(REALSXP, 0, real_res);
         } else if (IS_SIMPLE_SCALAR(lhs, REALSXP) &&
                    IS_SIMPLE_SCALAR(rhs, INTSXP)) {
-            double real_res = myfmod(ctx, *REAL(lhs), (double)*INTEGER(rhs));
+            double real_res = myfmod(*REAL(lhs), (double)*INTEGER(rhs));
             STORE_BINOP(REALSXP, 0, real_res);
         } else if (IS_SIMPLE_SCALAR(lhs, INTSXP) &&
                    IS_SIMPLE_SCALAR(rhs, REALSXP)) {
-            double real_res = myfmod(ctx, (double)*INTEGER(lhs), *REAL(rhs));
+            double real_res = myfmod((double)*INTEGER(lhs), *REAL(rhs));
             STORE_BINOP(REALSXP, 0, real_res);
         } else if (IS_SIMPLE_SCALAR(lhs, INTSXP) &&
                    IS_SIMPLE_SCALAR(rhs, INTSXP)) {
@@ -1239,9 +1205,8 @@ BEGIN_MACHINE {
             if (l == NA_INTEGER || r == NA_INTEGER || r == 0) {
                 int_res = NA_INTEGER;
             } else {
-                int_res = (l >= 0 && r > 0)
-                              ? l % r
-                              : (int)myfmod(ctx, (double)l, (double)r);
+                int_res = (l >= 0 && r > 0) ? l % r
+                                            : (int)myfmod((double)l, (double)r);
             }
             STORE_BINOP(INTSXP, int_res, 0);
         } else {
@@ -1479,14 +1444,14 @@ BEGIN_MACHINE {
 
     PURE_INSTRUCTION(is_) {
         SEXP val = ostack_pop(ctx);
-        Immediate i = readImmediate();
+        Immediate type = readImmediate();
         advanceImmediate();
         bool res;
-        switch (i) {
+        switch (type) {
         case NILSXP:
         case LGLSXP:
         case REALSXP:
-            res = TYPEOF(val) == i;
+            res = TYPEOF(val) == type;
             break;
 
         case VECSXP:
@@ -1496,20 +1461,6 @@ BEGIN_MACHINE {
         case LISTSXP:
             res = TYPEOF(val) == LISTSXP || TYPEOF(val) == NILSXP;
             break;
-
-        case static_cast<Immediate>(TypeChecks::RealNonObject):
-            res = TYPEOF(val) == REALSXP && !isObject(val);
-            break;
-        case static_cast<Immediate>(TypeChecks::RealSimpleScalar):
-            res = IS_SIMPLE_SCALAR(val, REALSXP);
-            break;
-        case static_cast<Immediate>(TypeChecks::IntegerNonObject):
-            res = TYPEOF(val) == INTSXP && !isObject(val);
-            break;
-        case static_cast<Immediate>(TypeChecks::IntegerSimpleScalar):
-            res = IS_SIMPLE_SCALAR(val, INTSXP);
-            break;
-
         default:
             assert(false);
             res = false;
@@ -1519,9 +1470,64 @@ BEGIN_MACHINE {
         NEXT();
     }
 
-    PURE_INSTRUCTION(isobj_) {
+    PURE_INSTRUCTION(istype_) {
         SEXP val = ostack_pop(ctx);
-        ostack_push(ctx, isObject(val) ? R_TrueValue : R_FalseValue);
+        Immediate i = readImmediate();
+        advanceImmediate();
+        bool res;
+        switch (i) {
+
+        case static_cast<Immediate>(TypeChecks::IntegerNonObject):
+            res = TYPEOF(val) == INTSXP && !isObject(val);
+            break;
+        case static_cast<Immediate>(TypeChecks::IntegerNonObjectWrapped):
+            if (TYPEOF(val) == PROMSXP)
+                val = PRVALUE(val);
+            res = TYPEOF(val) == INTSXP && !isObject(val);
+            break;
+
+        case static_cast<Immediate>(TypeChecks::IntegerSimpleScalar):
+            res = IS_SIMPLE_SCALAR(val, INTSXP);
+            break;
+        case static_cast<Immediate>(TypeChecks::IntegerSimpleScalarWrapped):
+            if (TYPEOF(val) == PROMSXP)
+                val = PRVALUE(val);
+            res = IS_SIMPLE_SCALAR(val, INTSXP);
+            break;
+
+        case static_cast<Immediate>(TypeChecks::RealNonObject):
+            res = TYPEOF(val) == REALSXP && !isObject(val);
+            break;
+        case static_cast<Immediate>(TypeChecks::RealNonObjectWrapped):
+            if (TYPEOF(val) == PROMSXP)
+                val = PRVALUE(val);
+            res = TYPEOF(val) == REALSXP && !isObject(val);
+            break;
+
+        case static_cast<Immediate>(TypeChecks::RealSimpleScalar):
+            res = IS_SIMPLE_SCALAR(val, REALSXP);
+            break;
+        case static_cast<Immediate>(TypeChecks::RealSimpleScalarWrapped):
+            if (TYPEOF(val) == PROMSXP)
+                val = PRVALUE(val);
+            res = IS_SIMPLE_SCALAR(val, REALSXP);
+            break;
+
+        case static_cast<Immediate>(TypeChecks::IsObject):
+            res = isObject(val);
+            break;
+        case static_cast<Immediate>(TypeChecks::IsObjectWrapped):
+            if (TYPEOF(val) == PROMSXP)
+                val = PRVALUE(val);
+            res = isObject(val);
+            break;
+
+        default:
+            assert(false);
+            break;
+        }
+        ostack_push(ctx, res ? R_TrueValue : R_FalseValue);
+
         NEXT();
     }
 
@@ -1538,31 +1544,8 @@ BEGIN_MACHINE {
         SLOWASSERT(TYPEOF(sym) == SYMSXP);
         SLOWASSERT(!DDVAL(sym));
         assert(env);
-        SEXP val = R_findVarLocInFrame(env, sym).cell;
-        if (val == NULL)
-            Rf_errorcall(getSrcAt(c, pc - 1, ctx),
-                         "'missing' can only be used for arguments");
-
-        if (MISSING(val) || CAR(val) == R_MissingArg) {
-            ostack_push(ctx, R_TrueValue);
-            NEXT();
-        }
-
-        val = CAR(val);
-
-        if (TYPEOF(val) != PROMSXP) {
-            ostack_push(ctx, R_FalseValue);
-            NEXT();
-        }
-
-        val = findRootPromise(val);
-        if (!isSymbol(PREXPR(val)))
-            ostack_push(ctx, R_FalseValue);
-        else {
-            ostack_push(ctx, R_isMissing(PREXPR(val), PRENV(val))
-                                 ? R_TrueValue
-                                 : R_FalseValue);
-        }
+        ostack_push(ctx,
+                    isMissing(sym, env, c, pc) ? R_TrueValue : R_FalseValue);
         NEXT();
     }
 
@@ -1570,17 +1553,6 @@ BEGIN_MACHINE {
         SEXP val = ostack_top(ctx);
         if (val == R_MissingArg)
             Rf_error("argument is missing, with no default");
-        NEXT();
-    }
-
-    PURE_INSTRUCTION(brobj_) {
-        JumpOffset offset = readJumpOffset();
-        advanceJump();
-        if (isObject(ostack_top(ctx))) {
-            checkUserInterrupt();
-            pc += offset;
-        }
-        PC_BOUNDSCHECK(pc, c);
         NEXT();
     }
 

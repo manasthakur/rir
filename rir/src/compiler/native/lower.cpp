@@ -6,9 +6,11 @@
 #include "compiler/analysis/liveness.h"
 #include "compiler/pir/pir_impl.h"
 #include "compiler/util/visitor.h"
+#include "interpreter/LazyEnvironment.h"
 #include "interpreter/instance.h"
 #include "jit/jit-dump.h"
 #include "jit/jit-value.h"
+#include "runtime/DispatchTable.h"
 #include "utils/Pool.h"
 
 #include <cassert>
@@ -25,6 +27,9 @@ static const auto tagOfs_ = (size_t) & ((SEXP)0) -> u.listsxp.tagval;
 static const auto prValueOfs = (size_t) & ((SEXP)0) -> u.promsxp.value;
 static const auto stackCellValueOfs = (size_t) & ((R_bcstack_t*)0) -> u.sxpval;
 static const auto sxpinfofOfs = (size_t) & ((SEXP)0) -> sxpinfo;
+static const auto dataptrOfs = (size_t)STDVEC_DATAPTR((SEXP)0);
+static const auto extsxpMagicOfs =
+    (size_t) & ((rir_header*)STDVEC_DATAPTR((SEXP)0)) -> magic;
 
 struct Representation {
     enum Type {
@@ -121,6 +126,12 @@ class PirCodeFunction : public jit_function {
     jit_value cdr(jit_value x);
     jit_value tag(jit_value x);
     void setCar(jit_value x, jit_value y);
+
+    void externalsxpSetEntry(jit_value x, int i, jit_value y);
+    jit_value externalsxpGetEntry(jit_value x, int i);
+
+    void envStubSet(jit_value x, int i, jit_value y);
+    jit_value envStubGet(jit_value x, int i);
 
     jit_value call(const NativeBuiltin&, const std::vector<jit_value>&);
 
@@ -551,17 +562,17 @@ void PirCodeFunction::ensureNamed(jit_value v) {
 void PirCodeFunction::incrementNamed(jit_value v) {
     auto sxpinfo = insn_load_relative(v, sxpinfofOfs, jit_type_ulong);
     // named count is NAMED_BITS, starting at the 33th bit
-    static auto namedMask = ((unsigned long)pow(2, NAMED_BITS) - 1) << 33;
+    static auto namedMask = ((unsigned long)pow(2, NAMED_BITS) - 1) << 32;
     static auto namedNegMask = ~namedMask;
 
     auto isNamedMax = jit_label();
 
     auto named = insn_and(sxpinfo, new_constant(namedMask));
-    named = insn_shr(named, new_constant(33));
+    named = insn_shr(named, new_constant(32));
     insn_branch_if(named == new_constant(NAMEDMAX), isNamedMax);
 
     auto newNamed = insn_add(named, new_constant(1));
-    newNamed = insn_shl(newNamed, new_constant(33));
+    newNamed = insn_shl(newNamed, new_constant(32));
     auto newSxpinfo = insn_and(sxpinfo, new_constant(namedNegMask));
     newSxpinfo = insn_or(newSxpinfo, newNamed);
     insn_store_relative(v, sxpinfofOfs, newSxpinfo);
@@ -613,6 +624,72 @@ void PirCodeFunction::setCar(jit_value x, jit_value y) {
                  [&]() {
                      call(NativeBuiltins::setCar, {{x, y}});
                  });
+}
+
+void PirCodeFunction::externalsxpSetEntry(jit_value x, int i, jit_value y) {
+#ifdef ENABLE_SLOWASSERT
+    auto tp = sexptype(x);
+    insn_assert(tp == new_constant(EXTERNALSXP),
+                "externalsxpGetEntry on something which is not an EXTERNALSXP");
+#endif
+    writeBarrier(x, y,
+                 [&]() {
+                     auto ofset =
+                         insn_load_relative(x, dataptrOfs, jit_type_uint);
+                     auto pos = new_constant(dataptrOfs) + ofset +
+                                new_constant(i * sizeof(SEXP));
+                     insn_store_relative(x + pos, 0, y);
+                 },
+                 [&]() {
+                     call(NativeBuiltins::externalsxpSetEntry,
+                          {{x, new_constant(i), y}});
+                 });
+}
+
+jit_value PirCodeFunction::externalsxpGetEntry(jit_value x, int i) {
+#ifdef ENABLE_SLOWASSERT
+    auto tp = sexptype(x);
+    insn_assert(tp == new_constant(EXTERNALSXP),
+                "externalsxpGetEntry on something which is not an EXTERNALSXP");
+#endif
+    auto ofset = insn_load_relative(x, dataptrOfs, jit_type_uint);
+    auto pos =
+        new_constant(dataptrOfs) + ofset + new_constant(i * sizeof(SEXP));
+    return insn_load_relative(x + pos, 0, sxp);
+}
+
+jit_value PirCodeFunction::envStubGet(jit_value x, int i) {
+    // We could use externalsxpGetEntry, but this is faster
+#ifdef ENABLE_SLOWASSERT
+    auto magic = insn_load_relative(x, extsxpMagicOfs, jit_type_uint);
+    insn_assert(magic == new_constant(LAZY_ENVIRONMENT_MAGIC),
+                "envStubGet on something which is not an env stub");
+#endif
+    auto offset = dataptrOfs + sizeof(LazyEnvironment) +
+                  sizeof(SEXP) * LazyEnvironment::ArgOffset;
+    offset += i * sizeof(SEXP);
+    return insn_load_relative(x, offset, sxp);
+}
+
+void PirCodeFunction::envStubSet(jit_value x, int i, jit_value y) {
+    // We could use externalsxpSetEntry, but this is faster
+    writeBarrier(
+        x, y,
+        [&]() {
+#ifdef ENABLE_SLOWASSERT
+            auto magic = insn_load_relative(x, extsxpMagicOfs, jit_type_uint);
+            insn_assert(magic == new_constant(LAZY_ENVIRONMENT_MAGIC),
+                        "envStubSet on something which is not an env stub");
+#endif
+            auto offset = dataptrOfs + sizeof(LazyEnvironment) +
+                          sizeof(SEXP) * LazyEnvironment::ArgOffset;
+            offset += i * sizeof(SEXP);
+            insn_store_relative(x, offset, y);
+        },
+        [&]() {
+            call(NativeBuiltins::externalsxpSetEntry,
+                 {{x, new_constant(i + LazyEnvironment::ArgOffset), y}});
+        });
 }
 
 jit_value PirCodeFunction::car(jit_value x) {
@@ -881,6 +958,7 @@ void PirCodeFunction::build() {
         insn_branch(done);
 
         insn_label(isNa);
+        // TODO: fix bug when res is double
         store(res, new_constant(NA_INTEGER));
 
         insn_label(done);
@@ -990,6 +1068,7 @@ void PirCodeFunction::build() {
         auto size = new_constant(idx * sizeof(SEXPREC));
         bindingsCacheBase = insn_alloca(size);
     }
+
     LoweringVisitor::run(code->entry, [&](BB* bb) {
         insn_label(blockLabel.at(bb));
 
@@ -1029,7 +1108,7 @@ void PirCodeFunction::build() {
 
                 jit_value res;
                 if (r1 == Representation::Sexp) {
-                    res = call(NativeBuiltins::asLogical, {loadSxp(i, arg)});
+                    res = call(NativeBuiltins::asLogicalBlt, {loadSxp(i, arg)});
                 } else if (r1 == Representation::Real) {
                     res = insn_dup(load(i, arg, Representation::Integer));
 
@@ -1055,6 +1134,15 @@ void PirCodeFunction::build() {
                 break;
             }
 
+            case Tag::Missing: {
+                assert(representationOf(i) == Representation::Integer);
+                auto missing = Missing::Cast(i);
+                setVal(i, call(NativeBuiltins::isMissing,
+                               {constant(missing->varName, sxp),
+                                loadSxp(i, i->env())}));
+                break;
+            }
+
             case Tag::ChkMissing: {
                 auto arg = i->arg(0).val();
                 if (representationOf(arg) == Representation::Sexp)
@@ -1076,11 +1164,20 @@ void PirCodeFunction::build() {
                     auto a = loadSxp(i, arg);
                     if (t->typeTest.isA(RType::integer)) {
                         res = insn_eq(sexptype(a), new_constant(INTSXP));
+                    } else if (t->typeTest.isA(PirType(RType::integer)
+                                                   .orPromiseWrapped())) {
+                        a = depromise(a);
+                        res = insn_eq(sexptype(a), new_constant(INTSXP));
                     } else if (t->typeTest.isA(RType::real)) {
+                        res = insn_eq(sexptype(a), new_constant(REALSXP));
+                    } else if (t->typeTest.isA(
+                                   PirType(RType::real).orPromiseWrapped())) {
+                        a = depromise(a);
                         res = insn_eq(sexptype(a), new_constant(REALSXP));
                     } else {
                         t->print(std::cerr, true);
-                        assert(false);
+                        assert(false &&
+                               "Unsupported IsType check in native backend");
                     }
                     if (t->typeTest.isScalar()) {
                         res = insn_and(
@@ -1094,17 +1191,63 @@ void PirCodeFunction::build() {
                 break;
             }
 
-            case Tag::IsObject: {
-                if (representationOf(i) != Representation::Integer) {
-                    success = false;
-                    break;
-                }
-
+            case Tag::Is: {
+                assert(representationOf(i) == Representation::Integer);
+                auto is = Is::Cast(i);
                 auto arg = i->arg(0).val();
-                if (representationOf(arg) == Representation::Sexp)
-                    setVal(i, isObj(loadSxp(i, arg)));
-                else
+                if (representationOf(arg) == Representation::Sexp) {
+                    auto argNative = loadSxp(i, arg);
+                    auto expectedTypeNative = new_constant(is->sexpTag);
+                    jit_value res;
+                    auto typeNative = sexptype(argNative);
+                    switch (is->sexpTag) {
+                    case NILSXP:
+                    case LGLSXP:
+                    case REALSXP:
+                        res = typeNative == expectedTypeNative;
+                        break;
+
+                    case VECSXP: {
+                        auto operandLhs = typeNative == new_constant(VECSXP);
+                        auto operandRhs = typeNative == new_constant(LISTSXP);
+                        res = insn_or(operandLhs, operandRhs);
+                        break;
+                    }
+
+                    case LISTSXP: {
+                        auto operandLhs = typeNative == new_constant(LISTSXP);
+                        auto operandRhs = typeNative == new_constant(NILSXP);
+                        res = insn_or(operandLhs, operandRhs);
+                        break;
+                    }
+
+                    default:
+                        assert(false);
+                        success = false;
+                        break;
+                    }
+
+                    setVal(i, res);
+
+                } else {
+                    // How do we implement the fast path? Because in native
+                    // representations we may have lost the real representation
+                    success = false;
+                }
+                break;
+            }
+
+            case Tag::IsObject: {
+                assert(representationOf(i) == Representation::Integer);
+                auto arg = i->arg(0).val();
+                if (representationOf(arg) == Representation::Sexp) {
+                    auto a = loadSxp(i, arg);
+                    if (arg->type.maybePromiseWrapped())
+                        a = depromise(a);
+                    setVal(i, isObj(a));
+                } else {
                     setVal(i, new_constant((int)0));
+                }
                 break;
             }
 
@@ -1149,6 +1292,64 @@ void PirCodeFunction::build() {
                     BinopKind::NE);
                 break;
 
+            case Tag::Not: {
+                auto resultRep = representationOf(i);
+                auto argument = i->arg(0).val();
+                auto argumentRep = representationOf(argument);
+                if (argumentRep == Representation::Sexp) {
+                    auto argumentNative = loadSxp(i, argument);
+
+                    jit_value res;
+                    gcSafepoint(i, -1, true);
+                    if (i->hasEnv()) {
+                        res = call(NativeBuiltins::notEnv,
+                                   {argumentNative, loadSxp(i, i->env()),
+                                    new_constant(i->srcIdx)});
+                    } else {
+                        res = call(NativeBuiltins::notOp, {argumentNative});
+                    }
+                    if (resultRep == Representation::Integer)
+                        setVal(i, unboxIntLgl(res));
+                    else
+                        setVal(i, res);
+                    break;
+                }
+
+                jit_label done;
+                jit_label isNa;
+
+                auto checkNa = [&](jit_value v, Representation r) {
+                    if (r == Representation::Integer) {
+                        auto aIsNa = insn_eq(v, new_constant(NA_INTEGER));
+                        insn_branch_if(aIsNa, isNa);
+                    } else if (r == Representation::Real) {
+                        auto aIsNa = insn_ne(v, v);
+                        insn_branch_if(aIsNa, isNa);
+                    } else {
+                        assert(false);
+                    }
+                };
+
+                auto res = jit_value_create(raw(), jit_type_int);
+                auto argumentNative = load(i, argument, argumentRep);
+
+                checkNa(argumentNative, argumentRep);
+
+                store(res, insn_to_not_bool(argumentNative));
+                insn_branch(done);
+
+                insn_label(isNa);
+                // Maybe we need to model R_LogicalNAValue?
+                store(res, new_constant(NA_INTEGER));
+
+                insn_label(done);
+
+                if (resultRep == Representation::Sexp)
+                    setVal(i, boxLgl(i, res));
+                else
+                    setVal(i, res);
+                break;
+            }
             case Tag::Eq:
                 compileRelop(
                     i, [&](jit_value a, jit_value b) { return insn_eq(a, b); },
@@ -1271,10 +1472,10 @@ void PirCodeFunction::build() {
             case Tag::LdVar: {
                 auto ld = LdVar::Cast(i);
 
-                // TODO support env stubs
                 auto env = MkEnv::Cast(ld->env());
                 if (env && env->stub) {
-                    success = false;
+                    setVal(i, envStubGet(loadSxp(i, env),
+                                         env->indexOf(ld->varName)));
                     break;
                 }
 
@@ -1311,98 +1512,62 @@ void PirCodeFunction::build() {
                 break;
             }
 
-            //   case Tag::Extract2_1D: {
-            //       auto ex = Extract2_1D::Cast(i);
-            //       auto vec = load(ex->arg<0>().val());
-            //       auto idx = ex->arg<1>().val();
-            //       int constantIdx = -1;
-            //       if (auto cidx = LdConst::Cast(idx)) {
-            //           if (IS_SIMPLE_SCALAR(cidx->c(), REALSXP)) {
-            //               constantIdx = REAL(cidx->c())[0] - 1;
-            //           } else if (IS_SIMPLE_SCALAR(cidx->c(), INTSXP)) {
-            //               constantIdx = INTEGER(cidx->c())[0] - 1;
-            //           } else {
-            //               success = false;
-            //               break;
-            //           }
-            //       }
+            case Tag::Extract1_1D: {
+                auto extract = Extract1_1D::Cast(i);
+                auto vector = loadSxp(i, extract->vec());
+                auto idx = loadSxp(i, extract->idx());
 
-            //       if (constantIdx < 0 || constantIdx > 3) {
-            //           success = false;
-            //           break;
-            //       }
+                // We should implement the fast cases (known and primitive
+                // types) speculatively here
+                auto env = constant(R_NilValue, sxp);
+                if (extract->hasEnv())
+                    env = loadSxp(i, extract->env());
 
-            //       jit_value res = jit_value_create(raw(), sxp);
-            //       auto type = sexptype(vec);
-            //       auto isInt = jit_label();
-            //       auto isReal = jit_label();
-            //       auto isVec = jit_label();
-            //       auto done = jit_label();
-            //       auto isIntTest = insn_eq(type, new_constant(INTSXP));
-            //       insn_branch_if(isIntTest, isInt);
-            //       auto isRealTest = insn_eq(type, new_constant(REALSXP));
-            //       insn_branch_if(isRealTest, isReal);
-            //       auto isVecTest = insn_eq(type, new_constant(VECSXP));
-            //       insn_branch_if(isVecTest, isVec);
+                gcSafepoint(i, -1, false);
+                auto res =
+                    call(NativeBuiltins::extract11,
+                         {vector, idx, env, new_constant(extract->srcIdx)});
+                setVal(i, res);
+                break;
+            }
 
-            //       // TODO;
-            //       call(NativeBuiltins::error, {});
-            //       insn_branch(done);
+            case Tag::Extract2_1D: {
+                auto extract = Extract2_1D::Cast(i);
+                auto vector = loadSxp(i, extract->vec());
+                auto idx = loadSxp(i, extract->idx());
 
-            //       insn_label(isInt);
-            //       // TODO check size
-            //       auto intOffset = stdVecDtptrOfs + sizeof(int) *
-            //       constantIdx;
-            //       auto intRes = insn_load_relative(vec, intOffset,
-            //       jit_type_int);
-            //       gcSafepoint(i, 1, false);
-            //       auto intResSexp = call(NativeBuiltins::newInt, {intRes});
-            //       store(res, intResSexp);
-            //       insn_branch(done);
+                auto env = constant(R_NilValue, sxp);
+                if (extract->hasEnv())
+                    env = loadSxp(i, extract->env());
 
-            //       insn_label(isReal);
-            //       // TODO check size
-            //       auto realOffset = stdVecDtptrOfs + sizeof(double) *
-            //       constantIdx;
-            //       auto realRes =
-            //           insn_load_relative(vec, realOffset,
-            //           jit_type_float64);
-            //       gcSafepoint(i, 1, false);
-            //       auto realResSexp = call(NativeBuiltins::newReal,
-            //       {realRes});
-            //       store(res, realResSexp);
-            //       insn_branch(done);
-
-            //       insn_label(isVec);
-            //       // TODO check size
-            //       auto vecOffset = stdVecDtptrOfs + sizeof(SEXP) *
-            //       constantIdx;
-            //       auto vecRes = insn_load_relative(vec, vecOffset, sxp);
-            //       store(res, vecRes);
-            //       insn_branch(done);
-
-            //       insn_label(done);
-            //       vals[i] = res;
-            //       break;
-            //   }
+                gcSafepoint(i, -1, false);
+                auto res =
+                    call(NativeBuiltins::extract21,
+                         {vector, idx, env, new_constant(extract->srcIdx)});
+                setVal(i, res);
+                break;
+            }
 
             case Tag::StVar: {
                 auto st = StVar::Cast(i);
                 auto environment = MkEnv::Cast(st->env());
 
+                if (environment && environment->stub) {
+                    envStubSet(loadSxp(i, environment),
+                               environment->indexOf(st->varName),
+                               loadSxp(i, st->val()));
+                    break;
+                }
+
                 auto setter = NativeBuiltins::stvar;
                 if (st->isStArg)
                     setter = NativeBuiltins::starg;
 
-                if (environment && environment->stub) {
-                    success = false;
-                    break;
-                }
                 if (bindingsCache.count(environment)) {
                     auto offset = bindingsCache.at(environment).at(st->varName);
                     auto cache = insn_load_relative(bindingsCacheBase, offset,
                                                     jit_type_nuint);
-                    jit_label done, miss;
+                    jit_label done, miss, identical;
 
                     auto newVal = loadSxp(i, st->arg<0>().val());
 
@@ -1411,11 +1576,17 @@ void PirCodeFunction::build() {
                     insn_branch_if(insn_eq(val, constant(R_UnboundValue, sxp)),
                                    miss);
 
-                    insn_branch_if(insn_eq(val, newVal), done);
+                    insn_branch_if(insn_eq(val, newVal), identical);
 
                     incrementNamed(newVal);
                     setCar(cache, newVal);
 
+                    insn_branch(done);
+
+                    insn_label(identical);
+                    // In the fast case (where the value is not updated) we
+                    // still need to ensure it is named.
+                    ensureNamed(val);
                     insn_branch(done);
 
                     insn_label(miss);
@@ -1426,6 +1597,7 @@ void PirCodeFunction::build() {
                           loadSxp(i, st->env())});
 
                     insn_label(done);
+
                 } else {
                     gcSafepoint(i, 1, false);
                     call(setter, {constant(st->varName, sxp),
@@ -1484,20 +1656,39 @@ void PirCodeFunction::build() {
                 //  (creates normal env for stubs, aborts if any
                 //  stvar/ldvar/isstubenv are present)
                 auto mkenv = MkEnv::Cast(i);
+                auto parent = loadSxp(i, mkenv->env());
+                static std::vector<std::vector<Immediate>> mkEnvStubNames;
+                mkEnvStubNames.push_back({});
+                auto& namesBuffer = mkEnvStubNames.back();
+                for (size_t i = 0; i < mkenv->nLocals(); ++i)
+                    namesBuffer.push_back(Pool::insert(mkenv->varName[i]));
+
+                if (mkenv->stub) {
+                    gcSafepoint(i, 1, true);
+                    auto env = call(NativeBuiltins::createStubEnvironment,
+                                    {parent, new_constant(mkenv->nLocals()),
+                                     new_constant(namesBuffer.data()),
+                                     new_constant(mkenv->context)});
+                    size_t pos = 0;
+                    mkenv->eachLocalVar([&](SEXP name, Value* v) {
+                        envStubSet(env, pos++, loadSxp(i, v));
+                    });
+                    setVal(i, env);
+                    break;
+                }
 
                 gcSafepoint(i, mkenv->nargs() + 1, true);
                 auto arglist = constant(R_NilValue, sxp);
                 mkenv->eachLocalVarRev([&](SEXP name, Value* v) {
                     if (v == MissingArg::instance()) {
-                        arglist = call(NativeBuiltins::consNrTaggedMissing,
+                        arglist = call(NativeBuiltins::createMissingBindingCell,
                                        {constant(name, sxp), arglist});
                     } else {
                         arglist =
-                            call(NativeBuiltins::consNrTagged,
+                            call(NativeBuiltins::createBindingCell,
                                  {loadSxp(i, v), constant(name, sxp), arglist});
                     }
                 });
-                auto parent = loadSxp(i, mkenv->env());
 
                 setVal(i,
                        call(NativeBuiltins::createEnvironment,
@@ -1508,6 +1699,45 @@ void PirCodeFunction::build() {
                     for (auto b : bindingsCache.at(i))
                         insn_store_relative(bindingsCacheBase, b.second,
                                             new_constant(nullptr));
+                break;
+            }
+
+            case Tag::IsEnvStub: {
+                auto arg = loadSxp(i, i->arg(0).val());
+                jit_label done;
+
+                auto res = jit_value_create(raw(), representationOf(i));
+                store(res, constant(R_FalseValue, representationOf(i)));
+
+                auto magic =
+                    insn_load_relative(arg, extsxpMagicOfs, jit_type_uint);
+                insn_branch_if(magic != new_constant(LAZY_ENVIRONMENT_MAGIC),
+                               done);
+
+                auto materialized = envStubGet(arg, -1);
+                insn_branch_if(materialized != new_constant(nullptr), done);
+
+                store(res, constant(R_TrueValue, representationOf(i)));
+
+                insn_label(done);
+
+                setVal(i, res);
+                break;
+            }
+
+            case Tag::MkFunCls: {
+                auto mkFunction = MkFunCls::Cast(i);
+                auto closure = mkFunction->cls;
+                auto srcRef = constant(closure->srcRef(), sxp);
+                auto formals = constant(closure->formals().original(), sxp);
+                auto body =
+                    constant(mkFunction->originalBody->container(), sxp);
+                assert(DispatchTable::check(
+                    mkFunction->originalBody->container()));
+                gcSafepoint(i, 1, true);
+                setVal(i, call(NativeBuiltins::createClosure,
+                               {body, formals, loadSxp(i, mkFunction->env()),
+                                srcRef}));
                 break;
             }
 
@@ -1816,6 +2046,8 @@ void* Lower::tryCompile(
     function.compile();
     function.build_end();
 
+    if (cls->name().substr(0, 10) != "mandelbrot")
+        return nullptr;
     if (function.success) {
         // auto ctx = globalContext();
         // void* args[1] = {&ctx};

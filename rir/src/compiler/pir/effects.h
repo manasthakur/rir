@@ -1,7 +1,6 @@
 #pragma once
 
 #include "utils/EnumSet.h"
-#include <cstdint>
 #include <iostream>
 
 namespace rir {

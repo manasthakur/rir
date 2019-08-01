@@ -18,7 +18,7 @@ void BC::write(CodeStream& cs) const {
     cs.insert(bc);
     switch (bc) {
 #define V(NESTED, name, name_) case Opcode::name_##_:
-BC_NOARGS(V, _)
+        BC_NOARGS(V, _)
 #undef V
         return;
 
@@ -67,25 +67,12 @@ BC_NOARGS(V, _)
         cs.insert(immediate.guard_fun_args);
         return;
 
-    case Opcode::call_implicit_:
-        cs.insert(immediate.callFixedArgs);
-        for (FunIdx arg : callExtra().immediateCallArguments)
-            cs.insert(arg);
-        break;
-
-    case Opcode::named_call_implicit_:
-        cs.insert(immediate.callFixedArgs);
-        for (FunIdx arg : callExtra().immediateCallArguments)
-            cs.insert(arg);
-        for (PoolIdx name : callExtra().callArgumentNames)
-            cs.insert(name);
-        break;
-
     case Opcode::call_:
         cs.insert(immediate.callFixedArgs);
         break;
 
     case Opcode::named_call_:
+    case Opcode::call_dots_:
         cs.insert(immediate.callFixedArgs);
         for (PoolIdx name : callExtra().callArgumentNames)
             cs.insert(name);
@@ -116,7 +103,6 @@ BC_NOARGS(V, _)
     case Opcode::brtrue_:
     case Opcode::beginloop_:
     case Opcode::push_context_:
-    case Opcode::brobj_:
     case Opcode::brfalse_:
         cs.patchpoint(immediate.offset);
         return;
@@ -125,6 +111,7 @@ BC_NOARGS(V, _)
     case Opcode::pick_:
     case Opcode::pull_:
     case Opcode::is_:
+    case Opcode::istype_:
     case Opcode::put_:
     case Opcode::alloc_:
     case Opcode::stvar_stubbed_:
@@ -218,24 +205,15 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
             break;
         }
         case Opcode::call_:
-        case Opcode::call_implicit_:
         case Opcode::named_call_:
-        case Opcode::named_call_implicit_: {
+        case Opcode::call_dots_: {
             i.callFixedArgs.nargs = InInteger(inp);
             i.callFixedArgs.ast = Pool::insert(ReadItem(refTable, inp));
             InBytes(inp, &i.callFixedArgs.given, sizeof(Assumptions));
             Opcode* c = code + 1 + sizeof(CallFixedArgs);
             // Read implicit promise argument offsets
-            if (*code == Opcode::call_implicit_ ||
-                *code == Opcode::named_call_implicit_) {
-                ArgIdx* immArgs = (ArgIdx*)c;
-                for (size_t j = 0; j < i.callFixedArgs.nargs; j++)
-                    immArgs[j] = InInteger(inp);
-                c += i.callFixedArgs.nargs * sizeof(ArgIdx);
-            }
             // Read named arguments
-            if (*code == Opcode::named_call_ ||
-                *code == Opcode::named_call_implicit_) {
+            if (*code == Opcode::named_call_ || *code == Opcode::call_dots_) {
                 PoolIdx* names = (PoolIdx*)c;
                 for (size_t j = 0; j < i.callFixedArgs.nargs; j++)
                     names[j] = Pool::insert(ReadItem(refTable, inp));
@@ -265,7 +243,7 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
             SEXP store = Rf_allocVector(RAWSXP, size);
             memcpy(DATAPTR(store), meta, size);
             i.pool = Pool::insert(store);
-            delete meta;
+            ::operator delete(meta);
             break;
         }
         case Opcode::assert_type_:
@@ -285,12 +263,12 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
         case Opcode::brtrue_:
         case Opcode::beginloop_:
         case Opcode::push_context_:
-        case Opcode::brobj_:
         case Opcode::brfalse_:
         case Opcode::popn_:
         case Opcode::pick_:
         case Opcode::pull_:
         case Opcode::is_:
+        case Opcode::istype_:
         case Opcode::put_:
         case Opcode::alloc_:
         case Opcode::ldarg_:
@@ -367,21 +345,13 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
                 WriteItem(Pool::get(bc.mkEnvExtra().names[j]), refTable, out);
             break;
         case Opcode::call_:
-        case Opcode::call_implicit_:
+        case Opcode::call_dots_:
         case Opcode::named_call_:
-        case Opcode::named_call_implicit_:
             OutInteger(out, i.callFixedArgs.nargs);
             WriteItem(Pool::get(i.callFixedArgs.ast), refTable, out);
             OutBytes(out, &i.callFixedArgs.given, sizeof(Assumptions));
-            // Write implicit promise argument offsets
-            if (*code == Opcode::call_implicit_ ||
-                *code == Opcode::named_call_implicit_) {
-                for (size_t j = 0; j < i.callFixedArgs.nargs; j++)
-                    OutInteger(out, bc.callExtra().immediateCallArguments[j]);
-            }
             // Write named arguments
-            if (*code == Opcode::named_call_ ||
-                *code == Opcode::named_call_implicit_) {
+            if (*code == Opcode::named_call_ || *code == Opcode::call_dots_) {
                 for (size_t j = 0; j < i.callFixedArgs.nargs; j++)
                     WriteItem(Pool::get(bc.callExtra().callArgumentNames[j]),
                               refTable, out);
@@ -425,12 +395,12 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
         case Opcode::brtrue_:
         case Opcode::beginloop_:
         case Opcode::push_context_:
-        case Opcode::brobj_:
         case Opcode::brfalse_:
         case Opcode::popn_:
         case Opcode::pick_:
         case Opcode::pull_:
         case Opcode::is_:
+        case Opcode::istype_:
         case Opcode::put_:
         case Opcode::alloc_:
         case Opcode::ldarg_:
@@ -468,12 +438,7 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
 void BC::printImmediateArgs(std::ostream& out) const {
     out << "[";
     for (auto arg : callExtra().immediateCallArguments) {
-        if (arg == MISSING_ARG_IDX)
-            out << " _";
-        else if (arg == DOTS_ARG_IDX)
-            out << " ...";
-        else
-            out << " " << std::hex << arg << std::dec;
+        out << " " << std::hex << arg << std::dec;
     }
     out << " ]";
 }
@@ -507,6 +472,18 @@ void BC::print(std::ostream& out) const {
                 if (i != (unsigned)prof.numTypes - 1)
                     out << ", ";
             }
+            if (prof.stateBeforeLastForce !=
+                ObservedValues::StateBeforeLastForce::unknown) {
+                out << " | "
+                    << ((prof.stateBeforeLastForce ==
+                         ObservedValues::StateBeforeLastForce::value)
+                            ? "value"
+                            : (prof.stateBeforeLastForce ==
+                               ObservedValues::StateBeforeLastForce::
+                                   evaluatedPromise)
+                                  ? "evaluatedPromise"
+                                  : "promise");
+            }
         } else {
             out << "<?>";
         }
@@ -519,23 +496,19 @@ void BC::print(std::ostream& out) const {
     case Opcode::num_of:
         assert(false);
         break;
-    case Opcode::call_implicit_: {
-        printImmediateArgs(out);
-        break;
-    }
-    case Opcode::named_call_implicit_: {
-        printImmediateArgs(out);
-        out << " ";
-        printNames(out, callExtra().callArgumentNames);
-        break;
-    }
     case Opcode::call_: {
         auto args = immediate.callFixedArgs;
         BC::NumArgs nargs = args.nargs;
         out << nargs;
         break;
     }
-
+    case Opcode::call_dots_: {
+        auto args = immediate.callFixedArgs;
+        BC::NumArgs nargs = args.nargs;
+        out << nargs << " ";
+        printNames(out, callExtra().callArgumentNames);
+        break;
+    }
     case Opcode::named_call_: {
         auto args = immediate.callFixedArgs;
         BC::NumArgs nargs = args.nargs;
@@ -624,23 +597,42 @@ void BC::print(std::ostream& out) const {
             << immediate.loc_cpy.target;
         break;
     case Opcode::is_:
+    case Opcode::istype_:
     case Opcode::alloc_:
         switch (immediate.i) {
-            case static_cast<Immediate>(TypeChecks::RealNonObject):
-                out << "RealNonObject";
-                break;
-            case static_cast<Immediate>(TypeChecks::RealSimpleScalar):
-                out << "RealSimpleScalar";
-                break;
-            case static_cast<Immediate>(TypeChecks::IntegerNonObject):
-                out << "IntegerNotObject";
-                break;
-            case static_cast<Immediate>(TypeChecks::IntegerSimpleScalar):
-                out << "IntegerSimpleScalar";
-                break;
-            default:
-                out << type2char(immediate.i);
-                break;
+        case static_cast<Immediate>(TypeChecks::RealNonObject):
+            out << "RealNonObject";
+            break;
+        case static_cast<Immediate>(TypeChecks::RealSimpleScalar):
+            out << "RealSimpleScalar";
+            break;
+        case static_cast<Immediate>(TypeChecks::IntegerNonObject):
+            out << "IntegerNotObject";
+            break;
+        case static_cast<Immediate>(TypeChecks::IntegerSimpleScalar):
+            out << "IntegerSimpleScalar";
+            break;
+        case static_cast<Immediate>(TypeChecks::RealNonObjectWrapped):
+            out << "RealNonObjectWrapped";
+            break;
+        case static_cast<Immediate>(TypeChecks::RealSimpleScalarWrapped):
+            out << "RealSimpleScalarWrapped";
+            break;
+        case static_cast<Immediate>(TypeChecks::IntegerNonObjectWrapped):
+            out << "IntegerNotObjectWrapped";
+            break;
+        case static_cast<Immediate>(TypeChecks::IntegerSimpleScalarWrapped):
+            out << "IntegerSimpleScalarWrapped";
+            break;
+        case static_cast<Immediate>(TypeChecks::IsObject):
+            out << "IsObject";
+            break;
+        case static_cast<Immediate>(TypeChecks::IsObjectWrapped):
+            out << "IsObjectWrapped";
+            break;
+        default:
+            out << type2char(immediate.i);
+            break;
         }
         break;
     case Opcode::record_call_: {
@@ -669,7 +661,7 @@ void BC::print(std::ostream& out) const {
     }
 
 #define V(NESTED, name, name_) case Opcode::name_##_:
-BC_NOARGS(V, _)
+        BC_NOARGS(V, _)
 #undef V
         break;
     case Opcode::mk_promise_:
@@ -680,7 +672,6 @@ BC_NOARGS(V, _)
     case Opcode::beginloop_:
     case Opcode::push_context_:
     case Opcode::brtrue_:
-    case Opcode::brobj_:
     case Opcode::brfalse_:
     case Opcode::br_:
         out << immediate.offset;

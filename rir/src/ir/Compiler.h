@@ -8,15 +8,15 @@
 #include "utils/FunctionWriter.h"
 #include "utils/Pool.h"
 
-#include <unordered_map>
-#include <iostream>
-#include <functional>
 #include <cassert>
+#include <functional>
+#include <iostream>
+#include <unordered_map>
 
 typedef struct RCNTXT RCNTXT;
 extern RCNTXT* R_GlobalContext;
-extern "C" SEXP R_syscall(int n, RCNTXT *cptr);
-extern "C" SEXP R_sysfunction(int n, RCNTXT *cptr);
+extern "C" SEXP R_syscall(int n, RCNTXT* cptr);
+extern "C" SEXP R_sysfunction(int n, RCNTXT* cptr);
 
 namespace rir {
 
@@ -40,9 +40,11 @@ class Compiler {
     }
 
   public:
-    static bool unsoundOpts;
     static bool profile;
+    static bool unsoundOpts;
     static bool sandbox;
+    static bool loopPeelingEnabled;
+
     SEXP finalize();
 
     static SEXP compileExpression(SEXP ast) {
@@ -118,6 +120,6 @@ class Compiler {
     }
 };
 
-}
+} // namespace rir
 
 #endif

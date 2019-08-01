@@ -19,7 +19,6 @@ struct Parameter {
 
     static bool RIR_PRESERVE;
     static unsigned RIR_SERIALIZE_CHAOS;
-    static bool SANDBOX;
 
     static unsigned RIR_CHECK_PIR_TYPES;
 };

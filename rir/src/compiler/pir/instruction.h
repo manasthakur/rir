@@ -222,7 +222,6 @@ class Instruction : public Value {
     virtual const char* name() const { return tagToStr(tag); }
 
     Instruction* hasSingleUse();
-    void cleanup();
     void eraseAndRemove();
     void replaceUsesWith(Value* val);
     void replaceUsesAndSwapWith(Instruction* val,
@@ -234,14 +233,16 @@ class Instruction : public Value {
     bool usesAreOnly(BB*, std::unordered_set<Tag>);
     bool usesDoNotInclude(BB*, std::unordered_set<Tag>);
 
-    typedef std::function<PirType(Value*)> TypeOf;
+    typedef std::function<PirType(Value*)> GetType;
 
-    virtual PirType inferType(
-        const TypeOf& at = [](Value* v) { return v->type; }) const {
+    virtual PirType inferType(const GetType& at = [](Value* v) {
+        return v->type;
+    }) const {
         return type;
     }
-    virtual Effects inferEffects(
-        const TypeOf& at = [](Value* v) { return v->type; }) const {
+    virtual Effects inferEffects(const GetType& at = [](Value* v) {
+        return v->type;
+    }) const {
         return effects;
     }
 
@@ -250,12 +251,13 @@ class Instruction : public Value {
         effects = inferEffects();
     }
 
-    PirType mergedInputType(
-        const TypeOf& typeof = [](Value* v) { return v->type; }) const {
+    PirType mergedInputType(const GetType& getType = [](Value* v) {
+        return v->type;
+    }) const {
         PirType t = PirType::bottom();
         eachArg([&](Value* arg) {
             if (!mayHaveEnv() || env() != arg)
-                t = t | typeof(arg);
+                t = t | getType(arg);
         });
         return t;
     }
@@ -266,28 +268,28 @@ class Instruction : public Value {
         Effect::DependsOnAssume;
 
     template <typename Result>
-    Result ifNonObjectArgs(const TypeOf& typeof, Result then,
+    Result ifNonObjectArgs(const GetType& getType, Result then,
                            Result otherwise) const {
-        if (!mergedInputType(typeof).maybeObj())
+        if (!mergedInputType(getType).maybeObj())
             return then;
         return otherwise;
     }
 
     template <typename Result>
-    Result ifScalarArgs(const TypeOf& typeof, Result then,
+    Result ifScalarArgs(const GetType& getType, Result then,
                         Result otherwise) const {
-        if (mergedInputType(typeof).isScalar())
+        if (mergedInputType(getType).isScalar())
             return then;
         return otherwise;
     }
 
-    PirType inferedTypeForArtithmeticInstruction(const TypeOf& typeof) const {
-        auto m = mergedInputType(typeof);
+    PirType inferedTypeForArtithmeticInstruction(const GetType& getType) const {
+        auto m = mergedInputType(getType);
         if (!m.maybeObj()) {
             auto t = PirType::bottom();
             eachArg([&](Value* v) {
                 if (!mayHaveEnv() || v != env())
-                    t = t.mergeWithConversion(typeof(v));
+                    t = t.mergeWithConversion(getType(v));
             });
             // Everything but numbers throws an error
             t = t & PirType::num().notMissing();
@@ -299,8 +301,8 @@ class Instruction : public Value {
         return type;
     }
 
-    PirType inferedTypeForLogicalInstruction(const TypeOf& typeof) const {
-        auto t = mergedInputType(typeof);
+    PirType inferedTypeForLogicalInstruction(const GetType& getType) const {
+        auto t = mergedInputType(getType);
         if (!t.maybeObj()) {
             auto res = PirType(RType::logical).notMissing();
             if (t.isScalar())
@@ -311,9 +313,9 @@ class Instruction : public Value {
     }
 
     Effects
-    inferedEffectsForArtithmeticInstruction(const TypeOf& typeof) const {
+    inferedEffectsForArtithmeticInstruction(const GetType& getType) const {
         auto e = effects;
-        auto t = mergedInputType(typeof);
+        auto t = mergedInputType(getType);
         if (!t.maybeObj())
             e = e & errorWarnVisible;
         if (t.isA(PirType::num().notObject())) {
@@ -326,9 +328,9 @@ class Instruction : public Value {
         return e;
     }
 
-    Effects inferedEffectsForLogicalInstruction(const TypeOf& typeof) const {
+    Effects inferedEffectsForLogicalInstruction(const GetType& getType) const {
         auto e = effects;
-        auto t = mergedInputType(typeof);
+        auto t = mergedInputType(getType);
         if (!t.maybeObj())
             e = e & errorWarnVisible;
         if (t.isA(PirType::atomOrSimpleVec().notObject())) {
@@ -350,6 +352,7 @@ class Instruction : public Value {
     virtual void print(std::ostream& out, bool tty = false) const;
     void printGraph(std::ostream& out, bool tty = false) const;
     void printRef(std::ostream& out) const override final;
+    std::string getRef() const;
     void print() const { print(std::cerr, true); }
     void printRecursive(std::ostream& out, int i) {
         if (i == 0)
@@ -403,8 +406,7 @@ class Instruction : public Value {
             COMPILER_INSTRUCTIONS(V)
 #undef V
             return static_cast<Instruction*>(v);
-        default: {
-        }
+        default: {}
         }
         return nullptr;
     }
@@ -931,13 +933,12 @@ class FLI(Seq, 3, Effects::Any()) {
               {{PirType::val(), PirType::val(), PirType::val()}},
               {{start, end, step}}) {}
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & PirType::num().notObject().notMissing(),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(
+            getType, type & PirType::num().notObject().notMissing(), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
     size_t gvnBase() const override {
         if (effects.contains(Effect::ExecuteCode))
@@ -987,11 +988,11 @@ class FLIE(Force, 2, ~Effects(Effect::NotSandboxable)) {
     Value* input() const { return arg(0).val(); }
     const char* name() const override { return strict ? "Force!" : "Force"; }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return typeof(input()).forced();
+    PirType inferType(const GetType& getType) const override final {
+        return getType(input()).forced();
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return typeof(input()).maybeLazy() ? effects : Effects::None();
+    Effects inferEffects(const GetType& getType) const override final {
+        return getType(input()).maybeLazy() ? effects : Effect::DependsOnAssume;
     }
     int minReferenceCount() const override { return MAX_REFCOUNT; }
 
@@ -1024,10 +1025,10 @@ class FLI(AsLogical, 1, Effect::Error) {
         : FixedLenInstruction(PirType::simpleScalarLogical(),
                               {{PirType::val()}}, {{in}}, srcIdx) {}
 
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        if (typeof(val()).isA((PirType() | RType::logical | RType::integer |
-                               RType::real | RType::str | RType::cplx)
-                                  .notObject())) {
+    Effects inferEffects(const GetType& getType) const override final {
+        if (getType(val()).isA((PirType() | RType::logical | RType::integer |
+                                RType::real | RType::str | RType::cplx)
+                                   .notObject())) {
             return Effects::None();
         }
         return effects;
@@ -1042,8 +1043,8 @@ class FLI(AsTest, 1, Effects() | Effect::Error | Effect::Warn) {
     explicit AsTest(Value* in)
         : FixedLenInstruction(NativeType::test, {{PirType::val()}}, {{in}}) {}
 
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        if (typeof(val()).isScalar())
+    Effects inferEffects(const GetType& getType) const override final {
+        if (getType(val()).isScalar())
             return effects & ~Effects(Effect::Warn);
         // Error on NA, hard to exclude
         return effects;
@@ -1077,13 +1078,12 @@ class FLIE(Subassign1_1D, 4, Effects::Any()) {
     Value* lhs() const { return arg(1).val(); }
     Value* idx() const { return arg(2).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & (typeof(rhs()) | typeof(lhs())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType,
+                               type & (getType(rhs()) | getType(lhs())), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
 };
 
@@ -1099,13 +1099,12 @@ class FLIE(Subassign2_1D, 4, Effects::Any()) {
     Value* lhs() const { return arg(1).val(); }
     Value* idx() const { return arg(2).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & (typeof(rhs()) | typeof(lhs())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType,
+                               type & (getType(rhs()) | getType(lhs())), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
 };
 
@@ -1123,13 +1122,12 @@ class FLIE(Subassign1_2D, 5, Effects::Any()) {
     Value* idx1() const { return arg(2).val(); }
     Value* idx2() const { return arg(3).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & (typeof(rhs()) | typeof(lhs())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType,
+                               type & (getType(rhs()) | getType(lhs())), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
 };
 
@@ -1147,13 +1145,12 @@ class FLIE(Subassign2_2D, 5, Effects::Any()) {
     Value* idx1() const { return arg(2).val(); }
     Value* idx2() const { return arg(3).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & (typeof(rhs()) | typeof(lhs())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType,
+                               type & (getType(rhs()) | getType(lhs())), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
 };
 
@@ -1166,13 +1163,12 @@ class FLIE(Extract1_1D, 3, Effects::Any()) {
     Value* vec() const { return arg(0).val(); }
     Value* idx() const { return arg(1).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & typeof(vec()).subsetType(typeof(idx())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(
+            getType, type & getType(vec()).subsetType(getType(idx())), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
     size_t gvnBase() const override {
         if (effects.contains(Effect::ExecuteCode))
@@ -1190,13 +1186,12 @@ class FLIE(Extract2_1D, 3, Effects::Any()) {
     Value* vec() const { return arg(0).val(); }
     Value* idx() const { return arg(1).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & typeof(vec()).extractType(typeof(idx())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(
+            getType, type & getType(vec()).extractType(getType(idx())), type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
     size_t gvnBase() const override {
         if (effects.contains(Effect::ExecuteCode))
@@ -1217,13 +1212,14 @@ class FLIE(Extract1_2D, 4, Effects::Any()) {
     Value* idx1() const { return arg(1).val(); }
     Value* idx2() const { return arg(2).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & typeof(vec()).subsetType(typeof(idx1()) | typeof(idx2())),
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(
+            getType,
+            type & getType(vec()).subsetType(getType(idx1()) | getType(idx2())),
             type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
     size_t gvnBase() const override {
         if (effects.contains(Effect::ExecuteCode))
@@ -1244,13 +1240,14 @@ class FLIE(Extract2_2D, 4, Effects::Any()) {
     Value* idx1() const { return arg(1).val(); }
     Value* idx2() const { return arg(2).val(); }
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof,
-            type & typeof(vec()).extractType(typeof(idx1()) | typeof(idx2())),
-            type);
+    PirType inferType(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType,
+                               type & getType(vec()).extractType(
+                                          getType(idx1()) | getType(idx2())),
+                               type);
     }
-    Effects inferEffects(const TypeOf& typeof) const override final {
-        return ifNonObjectArgs(typeof, effects & errorWarnVisible, effects);
+    Effects inferEffects(const GetType& getType) const override final {
+        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
     }
     size_t gvnBase() const override {
         if (effects.contains(Effect::ExecuteCode))
@@ -1294,7 +1291,7 @@ class FLI(IsType, 1, Effects::None()) {
   public:
     const PirType typeTest;
     IsType(PirType type, Value* v)
-        : FixedLenInstruction(NativeType::test, {{PirType::val()}}, {{v}}),
+        : FixedLenInstruction(NativeType::test, {{PirType::any()}}, {{v}}),
           typeTest(type) {}
 
     void printArgs(std::ostream& out, bool tty) const override;
@@ -1333,8 +1330,8 @@ class FLI(PirCopy, 1, Effects::None()) {
     int minReferenceCount() const override {
         return arg<0>().val()->minReferenceCount();
     }
-    PirType inferType(const TypeOf& typeof) const override final {
-        return typeof(arg<0>().val());
+    PirType inferType(const GetType& getType) const override final {
+        return getType(arg<0>().val());
     }
     size_t gvnBase() const override { return tagHash(); }
 };
@@ -1420,14 +1417,14 @@ class ArithmeticBinop : public Binop<BASE, TAG> {
     ArithmeticBinop(Value* lhs, Value* rhs, Value* env, unsigned srcIdx)
         : Super(lhs, rhs, env, srcIdx) {}
 
-    using typename Super::TypeOf;
-    using Super::inferedTypeForArtithmeticInstruction;
     using Super::inferedEffectsForArtithmeticInstruction;
-    PirType inferType(const TypeOf& typeof) const override {
-        return inferedTypeForArtithmeticInstruction(typeof);
+    using Super::inferedTypeForArtithmeticInstruction;
+    using typename Super::GetType;
+    PirType inferType(const GetType& getType) const override {
+        return inferedTypeForArtithmeticInstruction(getType);
     }
-    Effects inferEffects(const TypeOf& typeof) const override {
-        return inferedEffectsForArtithmeticInstruction(typeof);
+    Effects inferEffects(const GetType& getType) const override {
+        return inferedEffectsForArtithmeticInstruction(getType);
     }
 };
 
@@ -1450,8 +1447,8 @@ class Div : public ArithmeticBinop<Div, Tag::Div> {
     Div(Value* lhs, Value* rhs, Value* env, unsigned srcIdx)
         : ArithmeticBinop<Div, Tag::Div>(lhs, rhs, env, srcIdx) {}
 
-    PirType inferType(const TypeOf& typeof) const override final {
-        auto t = ArithmeticBinop<Div, Tag::Div>::inferType(typeof);
+    PirType inferType(const GetType& getType) const override final {
+        auto t = ArithmeticBinop<Div, Tag::Div>::inferType(getType);
         if (t.maybe(RType::integer) || t.maybe(RType::logical))
             return t | RType::real;
         return t;
@@ -1466,14 +1463,14 @@ class LogicalBinop : public Binop<BASE, TAG> {
     LogicalBinop(Value* lhs, Value* rhs, Value* env, unsigned srcIdx)
         : Super(lhs, rhs, env, srcIdx) {}
 
-    using typename Super::TypeOf;
-    using Super::inferedTypeForLogicalInstruction;
     using Super::inferedEffectsForLogicalInstruction;
-    PirType inferType(const TypeOf& typeof) const override {
-        return inferedTypeForLogicalInstruction(typeof);
+    using Super::inferedTypeForLogicalInstruction;
+    using typename Super::GetType;
+    PirType inferType(const GetType& getType) const override {
+        return inferedTypeForLogicalInstruction(getType);
     }
-    Effects inferEffects(const TypeOf& typeof) const override {
-        return inferedEffectsForLogicalInstruction(typeof);
+    Effects inferEffects(const GetType& getType) const override {
+        return inferedEffectsForLogicalInstruction(getType);
     }
 };
 
@@ -1548,14 +1545,14 @@ class ArithmeticUnop : public Unop<BASE, TAG> {
     ArithmeticUnop(Value* val, Value* env, unsigned srcIdx)
         : Super(val, env, srcIdx) {}
 
-    using typename Super::TypeOf;
-    using Super::inferedTypeForArtithmeticInstruction;
     using Super::inferedEffectsForArtithmeticInstruction;
-    PirType inferType(const TypeOf& typeof) const override {
-        return inferedTypeForArtithmeticInstruction(typeof);
+    using Super::inferedTypeForArtithmeticInstruction;
+    using typename Super::GetType;
+    PirType inferType(const GetType& getType) const override {
+        return inferedTypeForArtithmeticInstruction(getType);
     }
-    Effects inferEffects(const TypeOf& typeof) const override {
-        return inferedEffectsForArtithmeticInstruction(typeof);
+    Effects inferEffects(const GetType& getType) const override {
+        return inferedEffectsForArtithmeticInstruction(getType);
     }
 };
 
@@ -1567,14 +1564,14 @@ class LogicalUnop : public Unop<BASE, TAG> {
     LogicalUnop(Value* val, Value* env, unsigned srcIdx)
         : Super(val, env, srcIdx) {}
 
-    using typename Super::TypeOf;
-    using Super::inferedTypeForLogicalInstruction;
     using Super::inferedEffectsForLogicalInstruction;
-    PirType inferType(const TypeOf& typeof) const override {
-        return inferedTypeForLogicalInstruction(typeof);
+    using Super::inferedTypeForLogicalInstruction;
+    using typename Super::GetType;
+    PirType inferType(const GetType& getType) const override {
+        return inferedTypeForLogicalInstruction(getType);
     }
-    Effects inferEffects(const TypeOf& typeof) const override {
-        return inferedEffectsForLogicalInstruction(typeof);
+    Effects inferEffects(const GetType& getType) const override {
+        return inferedEffectsForLogicalInstruction(getType);
     }
 };
 
@@ -1864,9 +1861,9 @@ class VLIE(CallBuiltin, Effects::Any()), public CallInstruction {
     friend class BuiltinCallFactory;
 };
 
-class VLI(CallSafeBuiltin,
-          Effects(Effect::Warn) | Effect::Error | Effect::Visibility |
-              Effect::DependsOnAssume),
+class VLI(CallSafeBuiltin, Effects(Effect::NotSandboxable) | Effect::Warn |
+                               Effect::Error | Effect::Visibility |
+                               Effect::DependsOnAssume),
     public CallInstruction {
   public:
     SEXP blt;
@@ -1958,7 +1955,7 @@ class VLIE(MkEnv, Effects::None()) {
 class FLI(IsObject, 1, Effects::None()) {
   public:
     explicit IsObject(Value* v)
-        : FixedLenInstruction(NativeType::test, {{PirType::val()}}, {{v}}) {}
+        : FixedLenInstruction(NativeType::test, {{PirType::any()}}, {{v}}) {}
 
     size_t gvnBase() const override { return tagHash(); }
 };
@@ -2003,8 +2000,8 @@ class VLI(Phi, Effects::None()) {
         assert(nargs() == inputs.size());
     }
     void printArgs(std::ostream& out, bool tty) const override;
-    PirType inferType(const TypeOf& typeof) const override final {
-        return mergedInputType(typeof);
+    PirType inferType(const GetType& getType) const override final {
+        return mergedInputType(getType);
     }
     void pushArg(Value* a, PirType t) override {
         assert(false && "use addInput");

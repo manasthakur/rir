@@ -3,7 +3,6 @@
 
 #include "interp_incl.h"
 #include <R/r.h>
-#include <exception>
 
 namespace rir {
 

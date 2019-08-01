@@ -330,8 +330,25 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     }
 
     case Opcode::record_type_: {
-        if (bc.immediate.typeFeedback.numTypes)
-            at(0)->typeFeedback.merge(bc.immediate.typeFeedback);
+        if (bc.immediate.typeFeedback.numTypes) {
+            auto feedback = bc.immediate.typeFeedback;
+            at(0)->typeFeedback.merge(feedback);
+
+            // TODO: This does not work, if there are multiple force
+            // instructions, then the second one will see an already evaluated
+            // promise and it will always mark the input as already evaluated...
+            // We need to do this differently. if (auto force =
+            // Force::Cast(at(0))) {
+            //     auto arg = force->arg(0).val();
+            //     if (feedback.stateBeforeLastForce ==
+            //         ObservedValues::StateBeforeLastForce::value)
+            //         arg->typeFeedback = at(0)->typeFeedback;
+            //     else if (feedback.stateBeforeLastForce ==
+            //              ObservedValues::StateBeforeLastForce::evaluatedPromise)
+            //         arg->typeFeedback =
+            //         at(0)->typeFeedback.orPromiseWrapped();
+            // }
+        }
         break;
     }
 
@@ -352,211 +369,6 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         }
         insert.sandbox.stopSandboxing();
         break;
-
-    case Opcode::named_call_implicit_:
-    case Opcode::call_implicit_: {
-        // TODO: remove support for call_implicit_ here. This is only needed for
-        // dots calls, which we should get rid of. I just leave the code here to
-        // prevent it from bit rotting in case we want to switch back to using
-        // call_implicit_.
-        return false;
-
-        Value* callee = top();
-        SEXP monomorphic = nullptr;
-
-        // TODO: Support ...
-        for (auto argi : bc.callExtra().immediateCallArguments) {
-            if (argi == DOTS_ARG_IDX) {
-                log.warn("Cannot compile call with ... arguments");
-                return false;
-            }
-        }
-
-        // See if the call feedback suggests a monomorphic target
-        // TODO: Deopts in promises are not supported by the promise inliner. So
-        // currently it does not pay off to put any deopts in there.
-        if (callTargetFeedback.count(callee)) {
-            auto& feedback = callTargetFeedback.at(callee).second;
-            // If this call was never executed. Might as well compile an
-            // unconditional deopt
-            if (!inPromise() && srcCode->funInvocationCount > 1 &&
-                feedback.taken == 0) {
-                // To avoid deoptimization loops, we must ensure that on
-                // deoptimization we actually record the new call target.
-                // We do this by jumping back, before the record call bc.
-                auto deoptPos = pos - BC::recordCall().size();
-                if (*deoptPos == Opcode::record_call_) {
-                    auto fs =
-                        insert.registerFrameState(srcCode, deoptPos, stack);
-                    insert(new Deopt(fs));
-                    stack.clear();
-                    break;
-                }
-            }
-
-            if (feedback.taken > 1 && feedback.numTargets == 1)
-                monomorphic = feedback.getTarget(srcCode, 0);
-        }
-
-        bool monomorphicClosure =
-            monomorphic && isValidClosureSEXP(monomorphic);
-        bool monomorphicBuiltin = monomorphic &&
-                                  TYPEOF(monomorphic) == BUILTINSXP &&
-                                  // TODO implement support for call_builtin_
-                                  // with names
-                                  bc.bc == Opcode::call_implicit_;
-
-        int nargs = bc.callExtra().immediateCallArguments.size();
-        if (monomorphicBuiltin) {
-            int arity = getBuiltinArity(monomorphic);
-            if (arity != -1 && arity != nargs)
-                monomorphicBuiltin = false;
-        }
-        if (monomorphicClosure) {
-            if (DispatchTable::unpack(BODY(monomorphic))
-                    ->baseline()
-                    ->unoptimizable)
-                monomorphicClosure = false;
-        }
-
-        auto ldfun = LdFun::Cast(callee);
-        if (inPromise()) {
-            if (ldfun) {
-                ldfun->hint =
-                    monomorphic ? monomorphic : symbol::ambiguousCallTarget;
-            }
-            monomorphicBuiltin = monomorphicClosure = false;
-            monomorphic = nullptr;
-        }
-
-        Assume* assumption = nullptr;
-        // Insert a guard if we want to speculate
-        if (monomorphicBuiltin || monomorphicClosure) {
-            Value* expected = insert(new LdConst(monomorphic));
-            Value* given = callee;
-            // We use ldvar instead of ldfun for the guard. The reason is that
-            // ldfun can force promises, which is a pain for our optimizer to
-            // deal with. If we use a ldvar here, the actual ldfun will be
-            // delayed into the deopt branch. Note that ldvar is conservative.
-            // If we find a non-function binding with the same name, we will
-            // deopt unneccessarily. In the case of `c` this is guaranteed to
-            // cause problems, since many variables are called "c". Therefore we
-            // keep the ldfun in this case.
-            // TODO: Implement this with a dependency on the binding cell
-            // instead of an eager check.
-            if (ldfun && ldfun->varName != symbol::c)
-                given = insert(new LdVar(ldfun->varName, ldfun->env()));
-            Value* t = insert(new Identical(given, expected));
-            auto cp = addCheckpoint(srcCode, pos, stack, insert);
-            assumption = insert(new Assume(t, cp));
-        }
-
-        // Compile the arguments (eager for builltins)
-        std::vector<Value*> args;
-        {
-            size_t i = 0;
-            for (auto argi : bc.callExtra().immediateCallArguments) {
-                if (argi == MISSING_ARG_IDX) {
-                    args.push_back(MissingArg::instance());
-                } else {
-                    rir::Code* promiseCode = srcCode->getPromise(argi);
-                    bool eager = monomorphicBuiltin;
-                    auto arg = tryCreateArg(promiseCode, insert, eager);
-                    if (!arg)
-                        return false;
-                    args.push_back(arg);
-                }
-                i++;
-            }
-        }
-
-        size_t missingArgs = 0;
-        auto matchedArgs(args);
-        // Static argument name matching
-        // Currently we only match callsites with the correct number of
-        // arguments passed. Thus, we set those given assumptions below.
-        if (monomorphicClosure) {
-            bool correctOrder = bc.bc != Opcode::named_call_implicit_;
-
-            if (!correctOrder) {
-                correctOrder = ArgumentMatcher::reorder(
-                    FORMALS(monomorphic), bc.callExtra().callArgumentNames,
-                    matchedArgs);
-            }
-
-            size_t needed = RList(FORMALS(monomorphic)).length();
-
-            if (!correctOrder || needed < matchedArgs.size()) {
-                monomorphicClosure = false;
-                assert(assumption);
-                // Kill unnecessary speculation
-                assumption->arg<0>().val() = True::instance();
-            }
-
-            missingArgs = needed - matchedArgs.size();
-        }
-
-        // Emit the actual call
-        auto ast = bc.immediate.callFixedArgs.ast;
-        auto insertGenericCall = [&]() {
-            if (bc.bc == Opcode::named_call_implicit_) {
-                push(insert(new NamedCall(insert.env, pop(), args,
-                                          bc.callExtra().callArgumentNames,
-                                          ast)));
-            } else {
-                auto callee = pop();
-                Value* fs = nullptr;
-                if (inPromise())
-                    fs = Tombstone::framestate();
-                else
-                    fs = insert.registerFrameState(srcCode, nextPos, stack);
-                push(insert(new Call(insert.env, callee, args, fs, ast)));
-            }
-        };
-        if (monomorphicClosure) {
-            std::string name = "";
-            if (ldfun)
-                name = CHAR(PRINTNAME(ldfun->varName));
-
-            Assumptions given;
-            // Make some optimistic assumptions, they might be reset below...
-            given.add(Assumption::NoExplicitlyMissingArgs);
-            given.numMissing(missingArgs);
-            given.add(Assumption::NotTooFewArguments);
-            given.add(Assumption::NotTooManyArguments);
-            given.add(Assumption::CorrectOrderOfArguments);
-
-            {
-                size_t i = 0;
-                for (const auto& arg : matchedArgs) {
-                    if (arg == MissingArg::instance()) {
-                        given.remove(Assumption::NoExplicitlyMissingArgs);
-                        i++;
-                    } else {
-                        writeArgTypeToAssumptions(given, arg, i++);
-                    }
-                }
-            }
-
-            compiler.compileClosure(
-                monomorphic, name, given,
-                [&](ClosureVersion* f) {
-                    assert(f->owner()->rirClosure());
-                    pop();
-                    auto fs =
-                        insert.registerFrameState(srcCode, nextPos, stack);
-                    push(insert(new StaticCall(insert.env, f->owner(),
-                                               matchedArgs, fs, ast)));
-                },
-                insertGenericCall);
-        } else if (monomorphicBuiltin) {
-            pop();
-            push(insert(BuiltinCallFactory::New(env, monomorphic, args, ast)));
-        } else {
-            insertGenericCall();
-        }
-        break;
-    }
 
     case Opcode::mk_eager_promise_:
     case Opcode::mk_promise_: {
@@ -778,7 +590,6 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
             // Make some optimistic assumptions, they might be reset below...
             given.add(Assumption::NoExplicitlyMissingArgs);
             given.numMissing(missingArgs);
-            given.add(Assumption::NotTooFewArguments);
             given.add(Assumption::NotTooManyArguments);
             given.add(Assumption::CorrectOrderOfArguments);
 
@@ -1066,7 +877,6 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         break;
 
     // Currently unused opcodes:
-    case Opcode::brobj_:
     case Opcode::alloc_:
     case Opcode::push_code_:
     case Opcode::set_names_:
@@ -1099,7 +909,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::ldloc_:
     case Opcode::stloc_:
     case Opcode::movloc_:
-    case Opcode::isobj_:
+    case Opcode::istype_:
     case Opcode::isstubenv_:
     case Opcode::check_missing_:
     case Opcode::static_call_:
@@ -1117,6 +927,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::beginloop_:
     case Opcode::endloop_:
     case Opcode::ldddvar_:
+    case Opcode::call_dots_:
         log.unsupportedBC("Unsupported BC", bc);
         return false;
     }
@@ -1208,11 +1019,6 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
                 insert(new Branch(v));
                 break;
             }
-            case Opcode::brobj_: {
-                Value* v = insert(new IsObject(cur.stack.top()));
-                insert(new Branch(v));
-                break;
-            }
             case Opcode::beginloop_:
                 log.warn("Cannot compile Function. Unsupported beginloop bc");
                 return nullptr;
@@ -1237,7 +1043,6 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
                 insert.setBranch(branch, fall);
                 break;
             case Opcode::brfalse_:
-            case Opcode::brobj_:
                 insert.setBranch(fall, branch);
                 break;
             default:
@@ -1262,9 +1067,10 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
                              "in promise");
                     return nullptr;
                 }
-                // Return bytecode as top-level statement cannot cause non-local
-                // return. Therefore we can treat it as normal local return
-                // instruction. We just need to make sure to empty the stack.
+                // Return bytecode as top-level statement cannot cause
+                // non-local return. Therefore we can treat it as normal
+                // local return instruction. We just need to make sure to
+                // empty the stack.
                 cur.stack.clear();
                 break;
             case Opcode::deopt_:
@@ -1275,8 +1081,8 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
             }
             assert(cur.stack.empty());
             results.push_back(ReturnSite(insert.getCurrentBB(), tos));
-            // Setting the position to end, will either terminate the loop, or
-            // pop from the worklist
+            // Setting the position to end, will either terminate the loop,
+            // or pop from the worklist
             finger = end;
             continue;
         }
@@ -1303,8 +1109,8 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
 
             std::stringstream inner;
             inner << name;
-            // Try to find the name of this inner function by peeking for the
-            // stvar
+            // Try to find the name of this inner function by peeking for
+            // the stvar
             {
                 auto n = pc;
                 for (int i = 0; i < 2 && n < end; ++i, n = BC::next(n))
@@ -1329,22 +1135,21 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
             }
             inner << (pos - srcCode->code());
 
-            compiler.compileFunction(
-                function, inner.str(), formals, srcRef,
-                [&](ClosureVersion* innerF) {
-                    cur.stack.push(
-                        insert(new MkFunCls(innerF->owner(), dt, insert.env)));
+            compiler.compileFunction(function, inner.str(), formals, srcRef,
+                                     [&](ClosureVersion* innerF) {
+                                         cur.stack.push(insert(new MkFunCls(
+                                             innerF->owner(), dt, insert.env)));
 
-                    // Skip those instructions
-                    finger = pc;
-                    skip = true;
-                },
-                []() {
-                    // If the closure does not compile, we
-                    // can still call the unoptimized
-                    // version (which is what happens on
-                    // `tryRunCurrentBC` below)
-                });
+                                         // Skip those instructions
+                                         finger = pc;
+                                         skip = true;
+                                     },
+                                     []() {
+                                         // If the closure does not compile, we
+                                         // can still call the unoptimized
+                                         // version (which is what happens on
+                                         // `tryRunCurrentBC` below)
+                                     });
         });
 
         if (!skip) {
@@ -1458,8 +1263,8 @@ void Rir2Pir::finalize(Value* ret, Builder& insert) {
         });
     }
 
-    // Return in promise can lead to non-local return, which currently needs env
-    // to find the context to return to.
+    // Return in promise can lead to non-local return, which currently needs
+    // env to find the context to return to.
     insert(new Return(ret));
 
     InsertCast c(insert.code->entry, insert.env);

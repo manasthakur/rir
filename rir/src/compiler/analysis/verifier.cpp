@@ -35,6 +35,7 @@ class TheVerifier {
         if (!ok) {
             std::cerr << "Verification of function " << *f << " failed\n";
             f->print(std::cerr, false);
+            Rf_error("");
         }
 
         f->eachPromise([&](Promise* p) {
@@ -49,6 +50,7 @@ class TheVerifier {
             if (!ok) {
                 std::cerr << "Verification of promise failed\n";
                 p->printCode(std::cerr, false, false);
+                Rf_error("");
             }
         });
 
@@ -273,22 +275,6 @@ class TheVerifier {
                 std::cerr << "Error at instruction '";
                 i->print(std::cerr);
                 std::cerr << " framestate env cannot be elided\n";
-                ok = false;
-            }
-        }
-
-        if (auto cast = CastType::Cast(i)) {
-            auto arg = cast->arg<0>().val();
-            // assertion is:
-            // "input is a promise => output is a promise"
-            // to remove a promise wrapper -- even for eager args -- a force
-            // instruction is needed!
-            if (arg->type.maybePromiseWrapped() &&
-                !cast->type.maybePromiseWrapped()) {
-                std::cerr << "Error at instruction '";
-                i->print(std::cerr);
-                std::cerr
-                    << "': Cannot cast away promise wrapper. need to use Force";
                 ok = false;
             }
         }

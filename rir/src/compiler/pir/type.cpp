@@ -121,13 +121,6 @@ void PirType::merge(const ObservedValues& other) {
         return;
     }
 
-    if (other.numTypes == ObservedValues::MaxTypes) {
-        *this = *this | any();
-        flags_.set(TypeFlags::maybeObject);
-        flags_.set(TypeFlags::maybeNotScalar);
-        return;
-    }
-
     for (size_t i = 0; i < other.numTypes; ++i) {
         const auto& record = other.seen[i];
         if (record.object)
@@ -157,5 +150,5 @@ bool PirType::isInstance(SEXP val) const {
         assert(false);
     }
 }
-}
-}
+} // namespace pir
+} // namespace rir

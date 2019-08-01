@@ -2,7 +2,6 @@
 #define interpreter_context_h
 
 #include "R/r.h"
-#include "compiler/pir/effects.h"
 #include "ir/BC_inc.h"
 #include "runtime/Assumptions.h"
 
@@ -195,9 +194,7 @@ struct InterpreterInstance {
         safeStack.top() = false;
     }
 
-    RIR_INLINE void beginSandbox() {
-        snapshot.save(this);
-    }
+    RIR_INLINE void beginSandbox() { snapshot.save(this); }
 
     RIR_INLINE void endSandbox(bool succeed) {
         if (!succeed) {

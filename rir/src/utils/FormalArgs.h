@@ -1,7 +1,6 @@
 #pragma once
 
-#include "../R/RList.h"
-
+#include "R/r.h"
 #include <vector>
 
 namespace rir {
@@ -16,18 +15,7 @@ class FormalArgs {
     FormalArgs(const FormalArgs&) = delete;
     FormalArgs& operator=(const FormalArgs&) = delete;
 
-    explicit FormalArgs(SEXP formals)
-        : hasDefaultArgs_(false), hasDots_(false), original_(formals) {
-        for (auto it = RList(formals).begin(); it != RList::end(); ++it) {
-            names_.push_back(it.tag());
-            defaultArgs_.push_back(*it);
-
-            if (it.tag() == R_DotsSymbol)
-                hasDots_ = true;
-            if (*it != R_MissingArg)
-                hasDefaultArgs_ = true;
-        }
-    }
+    explicit FormalArgs(SEXP formals);
 
     const std::vector<SEXP>& names() const { return names_; }
 

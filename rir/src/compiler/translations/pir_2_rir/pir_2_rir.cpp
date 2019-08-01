@@ -8,9 +8,10 @@
 #include "allocators.h"
 #include "compiler/analysis/reference_count.h"
 #include "compiler/analysis/verifier.h"
+#include "compiler/native/lower.h"
+#include "compiler/native/lower_llvm.h"
 #include "compiler/parameter.h"
 #include "event_counters.h"
-#include "compiler/native/lower.h"
 #include "interpreter/instance.h"
 #include "ir/CodeStream.h"
 #include "ir/CodeVerifier.h"
@@ -157,14 +158,6 @@ class Pir2Rir {
                         changed = true;
                     } else if (bc.is(rir::Opcode::dup_) && next != code.end() &&
                                plus(next, 1) != code.end() &&
-                               next->first.is(rir::Opcode::isobj_) &&
-                               plus(next, 1)->first.is(rir::Opcode::brtrue_)) {
-                        auto target = plus(next, 1)->first.immediate.offset;
-                        next = code.erase(it, plus(next, 2));
-                        next = code.emplace(next, BC::brobj(target), noSource);
-                        changed = true;
-                    } else if (bc.is(rir::Opcode::dup_) && next != code.end() &&
-                               plus(next, 1) != code.end() &&
                                plus(next, 2) != code.end() &&
                                next->first.is(rir::Opcode::for_seq_size_) &&
                                plus(next, 1)->first.is(rir::Opcode::swap_) &&
@@ -269,9 +262,8 @@ static unsigned ClosuresCompiled =
     EventCounters::instance().registerCounter("closures compiled");
 #endif
 
-static bool PIR_NATIVE_BACKEND =
-    getenv("PIR_NATIVE_BACKEND") &&
-    0 == strncmp("1", getenv("PIR_NATIVE_BACKEND"), 1);
+static int PIR_NATIVE_BACKEND =
+    getenv("PIR_NATIVE_BACKEND") ? atoi(getenv("PIR_NATIVE_BACKEND")) : 0;
 
 rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 #ifdef ENABLE_EVENT_COUNTERS
@@ -705,24 +697,47 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 break;
             }
 
+            case Tag::IsObject: {
+                auto is = IsObject::Cast(instr);
+                auto arg = is->arg(0).val();
+
+                if (arg->type.maybePromiseWrapped()) {
+                    cb.add(BC::isType(TypeChecks::IsObjectWrapped));
+                } else {
+                    cb.add(BC::isType(TypeChecks::IsObject));
+                }
+                break;
+            }
+
             case Tag::IsType: {
                 auto is = IsType::Cast(instr);
                 auto t = is->typeTest;
-                assert(!t.isVoid() && !t.maybeObj() && !t.maybeLazy() &&
-                       !t.maybePromiseWrapped());
+                assert(!t.isVoid() && !t.maybeObj() && !t.maybeLazy());
 
                 if (t.isA(RType::integer)) {
                     if (t.isScalar())
-                        cb.add(BC::is(TypeChecks::IntegerSimpleScalar));
+                        cb.add(BC::isType(TypeChecks::IntegerSimpleScalar));
                     else
-                        cb.add(BC::is(TypeChecks::IntegerNonObject));
+                        cb.add(BC::isType(TypeChecks::IntegerNonObject));
+                } else if (t.isA(PirType(RType::integer).orPromiseWrapped())) {
+                    if (t.isScalar())
+                        cb.add(
+                            BC::isType(TypeChecks::IntegerSimpleScalarWrapped));
+                    else
+                        cb.add(BC::isType(TypeChecks::IntegerNonObjectWrapped));
                 } else if (t.isA(RType::real)) {
                     if (t.isScalar())
-                        cb.add(BC::is(TypeChecks::RealSimpleScalar));
+                        cb.add(BC::isType(TypeChecks::RealSimpleScalar));
                     else
-                        cb.add(BC::is(TypeChecks::RealNonObject));
+                        cb.add(BC::isType(TypeChecks::RealNonObject));
+                } else if (t.isA(PirType(RType::real).orPromiseWrapped())) {
+                    if (t.isScalar())
+                        cb.add(BC::isType(TypeChecks::RealSimpleScalarWrapped));
+                    else
+                        cb.add(BC::isType(TypeChecks::RealNonObjectWrapped));
                 } else {
                     t.print(std::cout);
+                    assert(false && "IsType used for unsupported type check");
                 }
                 break;
             }
@@ -772,7 +787,6 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 SIMPLE(Visible, visible);
                 SIMPLE(Invisible, invisible);
                 SIMPLE(Identical, identicalNoforce);
-                SIMPLE(IsObject, isobj);
                 SIMPLE(IsEnvStub, isstubenv);
                 SIMPLE(LOr, lglOr);
                 SIMPLE(LAnd, lglAnd);
@@ -909,7 +923,9 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 auto mkenv = MkEnv::Cast(instr);
                 cb.add(BC::mkEnv(mkenv->varName, mkenv->context, mkenv->stub));
                 cache.ifCacheRange(mkenv, [&](CachePosition::StartSize range) {
-                    cb.add(BC::clearBindingCache(range.first, range.second));
+                    if (range.second > 0)
+                        cb.add(
+                            BC::clearBindingCache(range.first, range.second));
                 });
                 break;
             }
@@ -985,10 +1001,10 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 
             // Values, not instructions
 #define V(Value) case Tag::Value:
-            COMPILER_VALUES(V) {
+                COMPILER_VALUES(V) {
 #undef V
-                break;
-            }
+                    break;
+                }
 
             // Dummy sentinel enum item
             case Tag::_UNUSED_: {
@@ -1054,13 +1070,16 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 
     auto localsCnt = alloc.slots();
     auto res = ctx.finalizeCode(localsCnt, cache.size());
-    if (PIR_NATIVE_BACKEND) {
-        {
-            Lower native;
-            if (auto n =
-                    native.tryCompile(cls, code, promMap, needsEnsureNamed)) {
-                res->nativeCode = (NativeCode)n;
-            }
+    if (PIR_NATIVE_BACKEND == 1) {
+        Lower native;
+        if (auto n = native.tryCompile(cls, code, promMap, needsEnsureNamed)) {
+            res->nativeCode = (NativeCode)n;
+        }
+    }
+    if (PIR_NATIVE_BACKEND == 2) {
+        LowerLLVM native;
+        if (auto n = native.tryCompile(cls, code, promMap, needsEnsureNamed)) {
+            res->nativeCode = (NativeCode)n;
         }
     }
     return res;
@@ -1070,7 +1089,7 @@ static bool coinFlip() {
     static std::mt19937 gen(Parameter::DEOPT_CHAOS_SEED);
     static std::bernoulli_distribution coin(0.03);
     return coin(gen);
-};
+}
 
 void Pir2Rir::lower(Code* code) {
     Visitor::runPostChange(code->entry, [&](BB* bb) {
@@ -1151,6 +1170,8 @@ void Pir2Rir::lower(Code* code) {
             it = next;
         }
     });
+
+    BBTransform::mergeRedundantBBs(code);
 
     // Insert Nop into all empty blocks to make life easier
     Visitor::run(code->entry, [&](BB* bb) {

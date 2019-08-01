@@ -499,7 +499,6 @@ void ForceDominance::apply(RirCompiler&, ClosureVersion* cls,
         for (auto m : forcedMkArg) {
             m.first->replaceDominatedUses(m.second);
         }
-
     };
     apply(cls);
 }

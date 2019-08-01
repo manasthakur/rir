@@ -236,11 +236,6 @@ BC BC::br(Jmp j) {
     i.offset = j;
     return BC(Opcode::br_, i);
 }
-BC BC::brobj(Jmp j) {
-    ImmediateArguments i;
-    i.offset = j;
-    return BC(Opcode::brobj_, i);
-}
 BC BC::pushContext(Jmp j) {
     ImmediateArguments i;
     i.offset = j;
@@ -271,41 +266,23 @@ BC BC::pick(uint32_t i) {
     im.i = i;
     return BC(Opcode::pick_, im);
 }
-BC BC::is(TypeChecks i) { return BC::is(static_cast<uint32_t>(i)); }
 BC BC::is(uint32_t i) {
+    assert(i < MAX_NUM_SEXPTYPE && "Invalid SEXPTYPE in is_");
     ImmediateArguments im;
     im.i = i;
     return BC(Opcode::is_, im);
+}
+BC BC::isType(TypeChecks i) {
+    assert(static_cast<uint32_t>(i) > MAX_NUM_SEXPTYPE &&
+           "Invalid type in istype_");
+    ImmediateArguments im;
+    im.i = static_cast<uint32_t>(i);
+    return BC(Opcode::istype_, im);
 }
 BC BC::put(uint32_t i) {
     ImmediateArguments im;
     im.i = i;
     return BC(Opcode::put_, im);
-}
-BC BC::callImplicit(const std::vector<FunIdx>& args, SEXP ast,
-                    const Assumptions& given) {
-    ImmediateArguments im;
-    im.callFixedArgs.nargs = args.size();
-    im.callFixedArgs.ast = Pool::insert(ast);
-    im.callFixedArgs.given = given;
-    BC cur(Opcode::call_implicit_, im);
-    cur.callExtra().immediateCallArguments = args;
-    return cur;
-}
-BC BC::callImplicit(const std::vector<FunIdx>& args,
-                    const std::vector<SEXP>& names, SEXP ast,
-                    const Assumptions& given) {
-    ImmediateArguments im;
-    im.callFixedArgs.nargs = args.size();
-    im.callFixedArgs.ast = Pool::insert(ast);
-    im.callFixedArgs.given = given;
-    std::vector<PoolIdx> nameIdxs;
-    for (auto n : names)
-        nameIdxs.push_back(Pool::insert(n));
-    BC cur(Opcode::named_call_implicit_, im);
-    cur.callExtra().immediateCallArguments = args;
-    cur.callExtra().callArgumentNames = nameIdxs;
-    return cur;
 }
 BC BC::call(size_t nargs, SEXP ast, const Assumptions& given) {
     ImmediateArguments im;
@@ -313,6 +290,19 @@ BC BC::call(size_t nargs, SEXP ast, const Assumptions& given) {
     im.callFixedArgs.ast = Pool::insert(ast);
     im.callFixedArgs.given = given;
     return BC(Opcode::call_, im);
+}
+BC BC::callDots(size_t nargs, const std::vector<SEXP>& names, SEXP ast,
+                const Assumptions& given) {
+    ImmediateArguments im;
+    im.callFixedArgs.nargs = nargs;
+    im.callFixedArgs.ast = Pool::insert(ast);
+    im.callFixedArgs.given = given;
+    std::vector<PoolIdx> nameIdxs;
+    for (auto n : names)
+        nameIdxs.push_back(Pool::insert(n));
+    BC cur(Opcode::call_dots_, im);
+    cur.callExtra().callArgumentNames = nameIdxs;
+    return cur;
 }
 BC BC::call(size_t nargs, const std::vector<SEXP>& names, SEXP ast,
             const Assumptions& given) {

@@ -5,6 +5,7 @@
 #include "../util/safe_builtins_list.h"
 #include "../util/visitor.h"
 #include "R/Funtab.h"
+#include "R/Symbols.h"
 #include "utils/Pool.h"
 #include "utils/Terminal.h"
 #include "utils/capture_out.h"
@@ -46,6 +47,13 @@ extern std::ostream& operator<<(std::ostream& out,
 }
 
 constexpr Effects Instruction::errorWarnVisible;
+
+std::string Instruction::getRef() const {
+    std::stringstream ss;
+    ss << "PIR";
+    printRef(ss);
+    return ss.str();
+}
 
 void Instruction::printRef(std::ostream& out) const {
     if (type == RType::env)
@@ -185,8 +193,6 @@ Instruction* Instruction::hasSingleUse() {
         return usage;
     return nullptr;
 }
-
-void Instruction::cleanup() {}
 
 void Instruction::eraseAndRemove() { bb()->remove(this); }
 
@@ -422,7 +428,7 @@ void LdFun::printArgs(std::ostream& out, bool tty) const {
         guessedBinding()->printRef(out);
         out << ">, ";
     }
-    if (hint) {
+    if (hint && hint != symbol::ambiguousCallTarget) {
         out << "<" << hint << ">, ";
     }
 }
@@ -724,8 +730,7 @@ CallInstruction* CallInstruction::CastCall(Value* v) {
         return CallSafeBuiltin::Cast(v);
     case Tag::NamedCall:
         return NamedCall::Cast(v);
-    default: {
-    }
+    default: {}
     }
     return nullptr;
 }
@@ -739,7 +744,6 @@ Assumptions CallInstruction::inferAvailableAssumptions() const {
             given.add(Assumption::NotTooManyArguments);
             auto missing = cls->nargs() - nCallArgs();
             given.numMissing(missing);
-            given.add(Assumption::NotTooFewArguments);
         }
     }
     given.add(Assumption::NotTooManyArguments);
