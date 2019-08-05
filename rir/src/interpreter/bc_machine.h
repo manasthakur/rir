@@ -137,7 +137,7 @@ BEGIN_MACHINE {
         bool hasMissing = false;
         for (long i = n - 1; i >= 0; --i) {
             SEXP val = ostack_pop(ctx);
-            ENSURE_NAMED(val);
+            INCREMENT_NAMED(val);
             SEXP name = cp_pool_at(ctx, names[i]);
             arglist = CONS_NR(val, arglist);
             SET_TAG(arglist, name);
@@ -876,6 +876,7 @@ BEGIN_MACHINE {
         advanceImmediate();
         SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);
         SEXP val = ostack_pop(ctx);
+        assert(TYPEOF(val) != PROMSXP);
         ENSURE_NAMEDMAX(val);
         SET_PRVALUE(prom, val);
         ostack_push(ctx, prom);

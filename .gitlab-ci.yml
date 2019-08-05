@@ -32,7 +32,7 @@ rir container:
     DOCKER_HOST: tcp://docker:2375/
     DOCKER_DRIVER: overlay2
   services:
-    - docker:dind
+    - docker:19.03.0-dind
   before_script:
     - docker info
   script:
@@ -49,7 +49,7 @@ benchmark container:
   only:
     - master
   services:
-    - docker:dind
+    - docker:19.03.0-dind
   before_script:
     - docker info
   script:
@@ -121,7 +121,7 @@ tests_fullverify:
     - bin/tests
     - bin/gnur-make-tests check-devel
 
-# Test particular features, like deoptimization
+# Test particular features, like deoptimization and serialization
 test_features:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
@@ -137,9 +137,9 @@ test_features:
     - cd /opt/rir/build/release
     - PIR_DEOPT_CHAOS=1 PIR_INLINER_MAX_INLINEE_SIZE=800 bin/gnur-make-tests check
     - PIR_WARMUP=2 PIR_DEOPT_CHAOS=1 ./bin/gnur-make-tests check
-    - PIR_NATIVE_BACKEND=1 ./bin/gnur-make-tests check
-    # TODO: fix bugs and switch to 'check'
-    - PIR_NATIVE_BACKEND=2 ./bin/gnur-make-tests test-Specific test-Reg
+    - PIR_NATIVE_BACKEND=2 ./bin/gnur-make-tests check
+    - RIR_SERIALIZE_CHAOS=1 FAST_TESTS=1 ./bin/tests
+    - RIR_SERIALIZE_CHAOS=10 FAST_TESTS=1 ./bin/tests
 
 # Run ubsan and gc torture
 test_sanitize:
@@ -198,7 +198,7 @@ deploy:
     DOCKER_HOST: tcp://docker:2375/
     DOCKER_DRIVER: overlay2
   services:
-    - docker:dind
+    - docker:19.03.0-dind
   before_script:
     - docker info
   variables:
@@ -253,7 +253,7 @@ benchmark_pir_ginger:
     paths:
     - benchmarks.data
     expire_in: 6 month
-benchmark_native_ginger:
+benchmark_llvm_ginger:
   image: registry.gitlab.com/rirvm/rir_mirror/benchmark:$CI_COMMIT_SHA
   stage: Benchmark
   variables:
@@ -265,7 +265,7 @@ benchmark_native_ginger:
   tags:
     - benchmarks-ginger
   script:
-    - $REBENCH_RUN "e:PIR-NATIVE $REBENCH_OPTIONS  --environment=Prg-Ginger"
+    - $REBENCH_RUN "e:PIR-LLVM $REBENCH_OPTIONS  --environment=Prg-Ginger"
   artifacts:
     paths:
     - benchmarks.data

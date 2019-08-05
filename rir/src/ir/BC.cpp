@@ -243,7 +243,7 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
             SEXP store = Rf_allocVector(RAWSXP, size);
             memcpy(DATAPTR(store), meta, size);
             i.pool = Pool::insert(store);
-            ::operator delete(meta);
+            ::operator delete(meta, size);
             break;
         }
         case Opcode::assert_type_:
@@ -292,7 +292,11 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
         }
         size = BC::size(code);
 #ifdef DEBUG_SERIAL
-        std::cout << "deserialized " << (int)*code << " size " << size << "\n";
+        if (*code == Opcode::deopt_) {
+            BC aBc = BC::decode(code, container);
+            std::cout << "deserialized: ";
+            aBc.print(std::cout);
+        }
 #endif
         assert(codeSize >= size);
         code += size;
@@ -425,7 +429,10 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
         }
         size = bc.size();
 #ifdef DEBUG_SERIAL
-        std::cout << "serialized " << (int)bc.bc << " size " << size << "\n";
+        if (bc.bc == Opcode::deopt_) {
+            std::cout << "serialized: ";
+            bc.print(std::cout);
+        }
 #endif
         assert(codeSize >= size);
         code += size;
