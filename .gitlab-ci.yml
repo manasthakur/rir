@@ -121,7 +121,7 @@ tests_fullverify:
     - bin/tests
     - bin/gnur-make-tests check-devel
 
-# Test particular features, like deoptimization and serialization
+# Test particular features: native backend, deoptimization, serialization, sandboxed transaction forces
 test_features:
   image: registry.gitlab.com/rirvm/rir_mirror:$CI_COMMIT_SHA
   variables:
@@ -140,6 +140,8 @@ test_features:
     - PIR_NATIVE_BACKEND=2 ./bin/gnur-make-tests check
     - RIR_SERIALIZE_CHAOS=1 FAST_TESTS=1 ./bin/tests
     - RIR_SERIALIZE_CHAOS=10 FAST_TESTS=1 ./bin/tests
+    - RIR_SANDBOX=on ./bin/tests
+    - RIR_SANDBOX=on ./bin/gnur-make-tests check
 
 # Run ubsan and gc torture
 test_sanitize:

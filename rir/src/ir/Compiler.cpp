@@ -1247,9 +1247,8 @@ bool Compiler::profile =
     !(getenv("RIR_PROFILING") &&
       std::string(getenv("RIR_PROFILING")).compare("off") == 0);
 
-bool Compiler::sandbox =
-    !(getenv("RIR_SANDBOX") &&
-      std::string(getenv("RIR_SANDBOX")).compare("off") == 0);
+bool Compiler::sandbox = getenv("RIR_SANDBOX") &&
+                         std::string(getenv("RIR_SANDBOX")).compare("on") == 1;
 
 bool Compiler::loopPeelingEnabled = true;
 

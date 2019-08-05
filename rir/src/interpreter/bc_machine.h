@@ -1,9 +1,9 @@
 assert(env != symbol::delayedEnv || (callCtxt != nullptr));
 
-if (c->nativeCode) {
-    return c->nativeCode(c, ctx,
-                         callCtxt ? (void*)callCtxt->stackArgs : nullptr, env,
-                         callCtxt ? callCtxt->callee : nullptr);
+checkUserInterrupt();
+if (!initialPC && c->nativeCode) {
+    return c->nativeCode(c, callCtxt ? (void*)callCtxt->stackArgs : nullptr,
+                         env, callCtxt ? callCtxt->callee : nullptr);
 }
 
 #ifdef THREADED_CODE
@@ -87,8 +87,6 @@ auto recordForceBehavior = [&](SEXP s) {
 };
 
 R_Visible = TRUE;
-
-checkUserInterrupt();
 
 // main loop
 BEGIN_MACHINE {
@@ -824,7 +822,8 @@ BEGIN_MACHINE {
             FunctionSignature::Environment::CallerProvided) {
             res = doCall(call, ctx);
         } else {
-            ArgsLazyData lazyArgs(&call, ctx);
+            ArgsLazyData lazyArgs(call.suppliedArgs, call.stackArgs, call.names,
+                                  ctx);
             fun->registerInvocation();
             supplyMissingArgs(call, fun);
             res = rirCallTrampoline(call, fun, symbol::delayedEnv,
