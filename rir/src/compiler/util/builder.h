@@ -21,9 +21,24 @@ struct RirStack;
 
 class Builder {
   public:
+    class Sandbox {
+        std::unordered_set<Instruction*> sandboxed_;
+        bool isSandboxing = false;
+
+        void record(Instruction* instr);
+
+      public:
+        void startSandboxing();
+        const std::unordered_set<Instruction*>& sandboxed();
+        void stopSandboxing();
+
+        friend class Builder;
+    };
+
     ClosureVersion* function;
     Code* code;
     Value* env;
+    Sandbox sandbox;
 
     Builder(ClosureVersion* fun, Promise* prom);
     Builder(ClosureVersion* fun, Value* enclos);

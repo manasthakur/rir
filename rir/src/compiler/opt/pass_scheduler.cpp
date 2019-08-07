@@ -57,8 +57,10 @@ PassScheduler::PassScheduler() {
     // This pass is scheduled second, since we want to first try to do this
     // statically in Phase 1
     add<TypeSpeculation>();
+    add<Sandbox>();
     addDefaultOpt();
     add<TypeSpeculation>();
+    add<Sandbox>();
     add<ElideEnvSpec>();
 
     add<PhaseMarker>("Phase 2: Env speculation");

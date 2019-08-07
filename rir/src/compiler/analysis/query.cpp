@@ -39,5 +39,10 @@ std::unordered_set<Value*> Query::returned(Code* c) {
     return returned;
 }
 
+bool Query::sandboxable(Code* c) {
+    return Visitor::check(
+        c->entry, [&](Instruction* i) { return !i->alwaysBreaksSandbox(); });
+}
+
 } // namespace pir
 } // namespace rir

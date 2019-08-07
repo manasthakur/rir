@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "CodeStream.h"
+#include "Compiler.h"
 #include "R/Funtab.h"
 #include "R/Printing.h"
 #include "R/RList.h"
@@ -133,6 +134,10 @@ void BC::write(CodeStream& cs) const {
 
     case Opcode::assert_type_:
         cs.insert(immediate.assertTypeArgs);
+        return;
+
+    case Opcode::end_sandbox_record_:
+        cs.insert(immediate.safeFeedback);
         return;
 
     case Opcode::invalid_:
@@ -275,6 +280,7 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
         case Opcode::ldvar_noforce_stubbed_:
         case Opcode::stvar_stubbed_:
         case Opcode::clear_binding_cache_:
+        case Opcode::end_sandbox_record_:
             assert((size - 1) % 4 == 0);
             InBytes(inp, code + 1, size - 1);
             break;
@@ -410,6 +416,7 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
         case Opcode::ldvar_noforce_stubbed_:
         case Opcode::stvar_stubbed_:
         case Opcode::clear_binding_cache_:
+        case Opcode::end_sandbox_record_:
             assert((size - 1) % 4 == 0);
             if (size != 0)
                 OutBytes(out, code + 1, size - 1);
@@ -458,7 +465,9 @@ void BC::printOpcode(std::ostream& out) const { out << name(bc) << "  "; }
 
 void BC::print(std::ostream& out) const {
     out << "   ";
-    if (bc != Opcode::record_call_ && bc != Opcode::record_type_)
+    if (bc != Opcode::record_call_ && bc != Opcode::record_type_ &&
+        bc != Opcode::begin_sandbox_record_ &&
+        bc != Opcode::end_sandbox_record_)
         printOpcode(out);
 
     auto printTypeFeedback = [&](const ObservedValues& prof) {
@@ -487,6 +496,8 @@ void BC::print(std::ostream& out) const {
         }
     };
 
+    if (bc == Opcode::begin_sandbox_record_)
+        out << "[ begin sandbox record ]";
     switch (bc) {
     case Opcode::invalid_:
     case Opcode::num_of:
@@ -678,8 +689,50 @@ void BC::print(std::ostream& out) const {
     case Opcode::assert_type_:
         out << immediate.assertTypeArgs.pirType();
         break;
+    case Opcode::end_sandbox_record_: {
+        const char* desc;
+        switch (immediate.safeFeedback) {
+        case ObservedSafe::Unknown:
+            desc = "???";
+            break;
+        case ObservedSafe::Unsafe:
+            desc = "unsafe";
+            break;
+        case ObservedSafe::Safe:
+            desc = "safe";
+            break;
+        default:
+            assert(false);
+            desc = "error";
+            break;
+        }
+        out << "[ end sandbox record: " << desc << " ]";
+        break;
+    }
     }
     out << "\n";
+}
+
+int BC::moveBeforeDeopt() {
+    switch (bc) {
+    case Opcode::ldvar_:
+    case Opcode::ldvar_super_:
+    case Opcode::ldvar_cached_:
+    case Opcode::ldvar_for_update_cache_:
+        return Compiler::sandbox ? 1 : 0; // before begin_sandbox_record_
+    default:
+        return 0;
+    }
+}
+
+bool BC::moveAfterDeopt() {
+    switch (bc) {
+    case Opcode::record_type_:
+    case Opcode::end_sandbox_record_:
+        return true;
+    default:
+        return false;
+    }
 }
 
 } // namespace rir

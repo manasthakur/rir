@@ -1,7 +1,6 @@
 #ifndef RIR_2_PIR_COMPILER_H
 #define RIR_2_PIR_COMPILER_H
 
-#include "../../../utils/FormalArgs.h"
 #include "../../debugging/stream_logger.h"
 #include "../rir_compiler.h"
 #include <stack>

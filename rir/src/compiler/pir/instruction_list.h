@@ -90,6 +90,8 @@
     V(Visible)                                                                 \
     V(Invisible)                                                               \
     V(PirCopy)                                                                 \
+    V(BeginSandbox)                                                            \
+    V(EndSandbox)                                                              \
     V(Nop)
 
 #endif

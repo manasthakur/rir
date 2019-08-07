@@ -376,6 +376,8 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
     if (cache.globalEnvsCacheSize() > 0)
         cb.add(BC::clearBindingCache(0, cache.globalEnvsCacheSize()));
 
+    bool inSandbox = false;
+
     LoweringVisitor::run(code->entry, [&](BB* bb) {
         if (isJumpThrough(bb))
             return;
@@ -749,6 +751,24 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 break;
             }
 
+            case Tag::Force:
+                if (inSandbox)
+                    cb.add(BC::forceSb());
+                else
+                    cb.add(BC::force());
+                break;
+
+            case Tag::BeginSandbox:
+                inSandbox = true;
+                // Should never happen unless cleanup is disabled
+                if (EndSandbox::Cast(*(it + 1)))
+                    cb.add(BC::push(R_TrueValue));
+                break;
+
+            case Tag::EndSandbox:
+                inSandbox = false;
+                break;
+
 #define EMPTY(Name)                                                            \
     case Tag::Name: {                                                          \
         break;                                                                 \
@@ -772,7 +792,6 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 SIMPLE(LAnd, lglAnd);
                 SIMPLE(Inc, inc);
                 SIMPLE(Dec, dec);
-                SIMPLE(Force, force);
                 SIMPLE(AsTest, asbool);
                 SIMPLE(Length, length);
                 SIMPLE(ChkMissing, checkMissing);
@@ -982,10 +1001,10 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
 
             // Values, not instructions
 #define V(Value) case Tag::Value:
-            COMPILER_VALUES(V) {
+                COMPILER_VALUES(V) {
 #undef V
-                break;
-            }
+                    break;
+                }
 
             // Dummy sentinel enum item
             case Tag::_UNUSED_: {
@@ -1003,7 +1022,8 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
             // Check the return type
             if (pir::Parameter::RIR_CHECK_PIR_TYPES > 0 &&
                 instr->type != PirType::voyd() &&
-                instr->type != NativeType::context && !CastType::Cast(instr) &&
+                instr->type != NativeType::context &&
+                !EndSandbox::Cast(instr) && !CastType::Cast(instr) &&
                 Visitor::check(code->entry, [&](Instruction* i) {
                     if (auto cast = CastType::Cast(i)) {
                         if (cast->arg<0>().val() == instr)
@@ -1020,7 +1040,13 @@ rir::Code* Pir2Rir::compileCode(Context& ctx, Code* code) {
                 } else {
                     instrStr = -1;
                 }
+                if (inSandbox) {
+                    assert(Force::Cast(instr));
+                    cb.add(BC::swap());
+                }
                 cb.add(BC::assertType(instr->type, instrStr));
+                if (inSandbox)
+                    cb.add(BC::swap());
             }
 
             // Store the result

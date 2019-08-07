@@ -2,6 +2,7 @@
 #define COMPILER_INSTRUCTION_H
 
 #include "R/r.h"
+#include "effects.h"
 #include "env.h"
 #include "instruction_list.h"
 #include "ir/BC_inc.h"
@@ -80,45 +81,6 @@ struct InstrArg {
 // environment can happen.
 enum class HasEnvSlot : uint8_t { Yes, No };
 
-// Effect that can be produced by an instruction.
-enum class Effect : uint8_t {
-    // Changes R_Visible
-    Visibility,
-    // Instruction might produce a warning. Example: AsTest warns if the
-    // vector used in an if condition has length > 1
-    Warn,
-    // Instruction might produce an error. Example: ForSeqSize raises an
-    // error if the collection to loop over is not indexable.
-    Error,
-    // Instruction might force promises
-    Force,
-    // Instruction might use reflection
-    Reflection,
-    // Instruction might leak some of it's arguments
-    LeakArg,
-
-    ChangesContexts,
-    ReadsEnv,
-    WritesEnv,
-    LeaksEnv,
-
-    TriggerDeopt,
-
-    // Instruction might execute more R code
-    ExecuteCode,
-
-    // If we speculatively optimize an instruction then we must set this flag
-    // to avoid it getting hoisted over its assumption. Take care when removing
-    // or masking this flag. Most of the time it is not correct to remove it,
-    // e.g. the type of inputs to an instructions might already be based on
-    // assumptions.
-    DependsOnAssume,
-
-    FIRST = Visibility,
-    LAST = DependsOnAssume,
-};
-typedef EnumSet<Effect> Effects;
-
 // Controlflow of instruction.
 enum class Controlflow : uint8_t {
     None,
@@ -132,6 +94,8 @@ enum class VisibilityFlag : uint8_t {
     Off,
     Unknown,
 };
+
+class Checkpoint;
 
 class Instruction : public Value {
   public:
@@ -148,6 +112,21 @@ class Instruction : public Value {
     Effects effects;
 
   public:
+    ObservedSafe safeFeedback = ObservedSafe::Unknown;
+
+    void sandbox(Checkpoint* checkpoint) {
+        elideEnv();
+        // May still have visibility, now can deopt, everything else breaks the
+        // sandbox
+        effects = (effects & (Effects(Effect::Visibility) | Effect::Warn |
+                              Effect::Error)) |
+                  Effect::TriggerDeopt;
+    }
+
+    virtual bool alwaysBreaksSandbox() const {
+        return effects.contains(Effect::NotSandboxable);
+    }
+
     void clearEffects() { effects.reset(); }
     void clearVisibility() { effects.reset(Effect::Visibility); }
     void clearLeaksEnv() { effects.reset(Effect::LeaksEnv); }
@@ -162,6 +141,7 @@ class Instruction : public Value {
         // Those are effects, and we are required to have them in the correct
         // order. But they are not "doing" anything on their own. If e.g.
         // instructions with those effects are unused, we can remove them.
+        e.reset(Effect::NotSandboxable);
         e.reset(Effect::LeakArg);
         e.reset(Effect::ReadsEnv);
         e.reset(Effect::LeaksEnv);
@@ -426,8 +406,7 @@ class Instruction : public Value {
             COMPILER_INSTRUCTIONS(V)
 #undef V
             return static_cast<Instruction*>(v);
-        default: {
-        }
+        default: {}
         }
         return nullptr;
     }
@@ -819,7 +798,9 @@ class FLI(ChkClosure, 1, Effect::Warn) {
     size_t gvnBase() const override { return tagHash(); }
 };
 
-class FLIE(StVarSuper, 2, Effects() | Effect::ReadsEnv | Effect::WritesEnv) {
+class FLIE(StVarSuper, 2,
+           Effects() | Effect::NotSandboxable | Effect::ReadsEnv |
+               Effect::WritesEnv) {
   public:
     StVarSuper(SEXP name, Value* val, Value* env)
         : FixedLenInstructionWithEnvSlot(PirType::voyd(), {{PirType::val()}},
@@ -854,7 +835,7 @@ class FLIE(LdVarSuper, 1, Effects() | Effect::Error | Effect::ReadsEnv) {
     int minReferenceCount() const override { return 1; }
 };
 
-class FLIE(StVar, 2, Effect::WritesEnv) {
+class FLIE(StVar, 2, Effects() | Effect::NotSandboxable | Effect::WritesEnv) {
   public:
     bool isStArg = false;
 
@@ -896,9 +877,9 @@ class Branch
     void printGraphBranches(std::ostream& out, size_t bbId) const override;
 };
 
-class Return
-    : public FixedLenInstruction<Tag::Return, Return, 1, Effects::None(),
-                                 HasEnvSlot::No, Controlflow::Exit> {
+class Return : public FixedLenInstruction<Tag::Return, Return, 1,
+                                          Effects(Effect::NotSandboxable),
+                                          HasEnvSlot::No, Controlflow::Exit> {
   public:
     explicit Return(Value* ret)
         : FixedLenInstruction(PirType::voyd(), {{PirType::val()}}, {{ret}}) {}
@@ -997,7 +978,7 @@ class FLIE(MkFunCls, 1, Effects::None()) {
     size_t gvnBase() const override { return hash_combine(tagHash(), cls); }
 };
 
-class FLIE(Force, 2, Effects::Any()) {
+class FLIE(Force, 2, ~Effects(Effect::NotSandboxable)) {
   public:
     // Set to true if we are sure that the promise will be forced here
     bool strict = false;
@@ -1320,7 +1301,7 @@ class FLI(IsType, 1, Effects::None()) {
     }
 };
 
-class FLI(LdFunctionEnv, 0, Effects::None()) {
+class FLI(LdFunctionEnv, 0, Effect::NotSandboxable) {
   public:
     LdFunctionEnv() : FixedLenInstruction(RType::env) {}
 };
@@ -1880,9 +1861,9 @@ class VLIE(CallBuiltin, Effects::Any()), public CallInstruction {
     friend class BuiltinCallFactory;
 };
 
-class VLI(CallSafeBuiltin,
-          Effects(Effect::Warn) | Effect::Error | Effect::Visibility |
-              Effect::DependsOnAssume),
+class VLI(CallSafeBuiltin, Effects(Effect::NotSandboxable) | Effect::Warn |
+                               Effect::Error | Effect::Visibility |
+                               Effect::DependsOnAssume),
     public CallInstruction {
   public:
     SEXP blt;
@@ -1985,7 +1966,8 @@ class FLIE(IsEnvStub, 1, Effect::ReadsEnv) {
         : FixedLenInstructionWithEnvSlot(NativeType::test, e) {}
 };
 
-class FLIE(PushContext, 3, Effect::ChangesContexts) {
+class FLIE(PushContext, 3,
+           Effects() | Effect::NotSandboxable | Effect::ChangesContexts) {
   public:
     PushContext(Value* ast, Value* op, Value* sysparent)
         : FixedLenInstructionWithEnvSlot(NativeType::context,
@@ -1993,7 +1975,8 @@ class FLIE(PushContext, 3, Effect::ChangesContexts) {
                                          {{ast, op}}, sysparent) {}
 };
 
-class FLI(PopContext, 2, Effect::ChangesContexts) {
+class FLI(PopContext, 2,
+          Effects() | Effect::NotSandboxable | Effect::ChangesContexts) {
   public:
     PopContext(Value* res, PushContext* push)
         : FixedLenInstruction(PirType::voyd(),
@@ -2115,6 +2098,16 @@ class ScheduledDeopt
     ScheduledDeopt() : VarLenInstruction(PirType::voyd()) {}
     void consumeFrameStates(Deopt* deopt);
     void printArgs(std::ostream& out, bool tty) const override;
+};
+
+class FLI(BeginSandbox, 0, Effect::TriggerDeopt) {
+  public:
+    BeginSandbox() : FixedLenInstruction(PirType::voyd(), {{}}, {{}}) {}
+};
+
+class FLI(EndSandbox, 0, Effect::TriggerDeopt) {
+  public:
+    EndSandbox() : FixedLenInstruction(NativeType::test, {{}}, {{}}) {}
 };
 
 #undef FLI

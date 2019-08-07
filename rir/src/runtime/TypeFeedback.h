@@ -100,5 +100,7 @@ enum class TypeChecks : uint32_t {
     IsObjectWrapped = 3339,
 };
 
+enum class ObservedSafe : uint32_t { Unknown, Unsafe, Safe };
+
 } // namespace rir
 #endif

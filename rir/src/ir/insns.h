@@ -551,6 +551,25 @@ DEF_INSTR(deopt_, 1, -1, 0, 0)
 DEF_INSTR(record_call_, 4, 1, 1, 0)
 DEF_INSTR(record_type_, 1, 1, 1, 0)
 
+/*
+ * pushes a "safe frame" to record if the following code can be sandboxed
+ */
+DEF_INSTR(begin_sandbox_record_, 0, 0, 0, 1)
+
+/*
+ * pops an "safe frame", and stores whether the code can be sandboxed
+ */
+DEF_INSTR(end_sandbox_record_, 1, 0, 0, 1)
+
+/*
+ * The following instructions deal with sandboxed execution. Sandboxed
+ * instructions behave equivalent to regular instructions, except they don't
+ * allow certain effects. Instead, if an effect would be executed, they push an
+ * extra "false", signalling that the sandbox was "broken". Otherwise they push
+ * "true".
+ */
+DEF_INSTR(force_sb_, 0, 1, 2, 0)
+
 DEF_INSTR(int3_, 0, 0, 0, 0)
 DEF_INSTR(printInvocation_, 0, 0, 0, 0)
 

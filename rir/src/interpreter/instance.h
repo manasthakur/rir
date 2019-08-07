@@ -11,6 +11,7 @@
 
 #include <assert.h>
 #include <functional>
+#include <stack>
 #include <stdint.h>
 
 namespace rir {
@@ -45,54 +46,7 @@ typedef struct {
 #define CONTEXT_INDEX_CP 0
 #define CONTEXT_INDEX_SRC 1
 
-/** Interpreter's context.
-
- Interpreter's context is a list (so that it will be marked by R's gc) that
- contains the SEXP pools and stack as well as other stacks that do not need to
- be gc'd.
-
- */
-
-struct InterpreterInstance {
-    SEXP list;
-    ResizeableList cp;
-    ResizeableList src;
-    ExprCompiler exprCompiler;
-    ClosureCompiler closureCompiler;
-    ClosureOptimizer closureOptimizer;
-};
-
-// TODO we might actually need to do more for the lengths (i.e. true length vs
-// length)
-
-RIR_INLINE size_t rl_length(ResizeableList* l) { return Rf_length(l->list); }
-
-RIR_INLINE void rl_setLength(ResizeableList* l, size_t length) {
-    ((VECSEXP)l->list)->vecsxp.length = length;
-    ((VECSEXP)l->list)->vecsxp.truelength = length;
-}
-
-RIR_INLINE void rl_grow(ResizeableList* l, SEXP parent, size_t index) {
-    int oldsize = rl_length(l);
-    SEXP n = Rf_allocVector(VECSXP, l->capacity * 2);
-    memcpy(DATAPTR(n), DATAPTR(l->list), l->capacity * sizeof(SEXP));
-    SET_VECTOR_ELT(parent, index, n);
-    l->list = n;
-    rl_setLength(l, oldsize);
-    l->capacity *= 2;
-}
-
-RIR_INLINE void rl_append(ResizeableList* l, SEXP val, SEXP parent,
-                          size_t index) {
-    size_t i = rl_length(l);
-    if (i == l->capacity) {
-        PROTECT(val);
-        rl_grow(l, parent, index);
-        UNPROTECT(1);
-    }
-    rl_setLength(l, i + 1);
-    SET_VECTOR_ELT(l->list, i, val);
-}
+/** R local stack */
 
 #define ostack_length(c) (R_BCNodeStackTop - R_BCNodeStackBase)
 
@@ -164,6 +118,124 @@ RIR_INLINE void ostack_ensureSize(InterpreterInstance* c, unsigned minFree) {
         // TODO....
         assert(false);
     }
+}
+
+/** Interpreter's context.
+
+ Interpreter's context is a list (so that it will be marked by R's gc) that
+ contains the SEXP pools and stack as well as other stacks that do not need to
+ be gc'd.
+
+ */
+
+// Lowest stack frame which can be modified in sandbox.
+// This is so we don't need to copy as much stack.
+// TODO enforce
+static const unsigned SANDBOX_STACK_PROTECTION = 3;
+
+struct InterpreterInstance {
+    SEXP list;
+    ResizeableList cp;
+    ResizeableList src;
+    ExprCompiler exprCompiler;
+    ClosureCompiler closureCompiler;
+    ClosureOptimizer closureOptimizer;
+
+    // Sandbox
+  private:
+    struct SandboxSnapshot {
+        unsigned safeStackSize = -1;
+        Rboolean curVis = (Rboolean)NA_LOGICAL;
+        size_t stackSize = -1;
+
+        void save(InterpreterInstance* ctx) {
+            safeStackSize = ctx->safeStack.size();
+            curVis = R_Visible;
+            stackSize = ostack_length(ctx);
+        }
+
+        void restore(InterpreterInstance* ctx) {
+            // Stop nested records
+            while (ctx->safeStack.size() > safeStackSize) {
+                ctx->stopRecordingSafe();
+            }
+            // Restores visibility, so it isn't considered an "effect"
+            R_Visible = curVis;
+            // Restore the stack
+            assert((size_t)ostack_length(ctx) >= stackSize);
+            ostack_popn(ctx, ostack_length(ctx) - stackSize);
+        }
+    };
+
+    std::stack<bool> safeStack;
+    SandboxSnapshot snapshot;
+    bool failNextRecord = false;
+
+  public:
+    RIR_INLINE void startRecordingSafe() {
+        safeStack.push(!failNextRecord);
+        failNextRecord = false;
+    }
+
+    RIR_INLINE bool stopRecordingSafe() {
+        assert(!safeStack.empty());
+        bool top = safeStack.top();
+        safeStack.pop();
+        // Effects still apply to outer frame
+        if (!top && isRecordingSafe())
+            recordUnsafe();
+        return top;
+    }
+
+    RIR_INLINE bool isRecordingSafe() { return !safeStack.empty(); }
+
+    RIR_INLINE void recordUnsafe() {
+        assert(!safeStack.empty());
+        safeStack.top() = false;
+    }
+
+    RIR_INLINE void beginSandbox() { snapshot.save(this); }
+
+    RIR_INLINE void endSandbox(bool succeed) {
+        if (!succeed) {
+            snapshot.restore(this);
+            // The next recorded section is the one which caused deopt, so
+            // this prevents it from causing deopt again
+            failNextRecord = true;
+        }
+    }
+};
+
+// TODO we might actually need to do more for the lengths (i.e. true length vs
+// length)
+
+RIR_INLINE size_t rl_length(ResizeableList* l) { return Rf_length(l->list); }
+
+RIR_INLINE void rl_setLength(ResizeableList* l, size_t length) {
+    ((VECSEXP)l->list)->vecsxp.length = length;
+    ((VECSEXP)l->list)->vecsxp.truelength = length;
+}
+
+RIR_INLINE void rl_grow(ResizeableList* l, SEXP parent, size_t index) {
+    int oldsize = rl_length(l);
+    SEXP n = Rf_allocVector(VECSXP, l->capacity * 2);
+    memcpy(DATAPTR(n), DATAPTR(l->list), l->capacity * sizeof(SEXP));
+    SET_VECTOR_ELT(parent, index, n);
+    l->list = n;
+    rl_setLength(l, oldsize);
+    l->capacity *= 2;
+}
+
+RIR_INLINE void rl_append(ResizeableList* l, SEXP val, SEXP parent,
+                          size_t index) {
+    size_t i = rl_length(l);
+    if (i == l->capacity) {
+        PROTECT(val);
+        rl_grow(l, parent, index);
+        UNPROTECT(1);
+    }
+    rl_setLength(l, i + 1);
+    SET_VECTOR_ELT(l->list, i, val);
 }
 
 class Locals final {

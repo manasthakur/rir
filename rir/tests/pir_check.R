@@ -158,8 +158,8 @@ stopifnot(pir.check(function() {
     q <- 1
   else {
     if (a)
-      q <- 3 
-    else 
+      q <- 3
+    else
       q <- 2
   }
   q
@@ -169,8 +169,8 @@ stopifnot(pir.check(function(a) {
     q <- 1
   else {
     if (a)
-      q <- 3 
-    else 
+      q <- 3
+    else
       q <- 2
   }
   q
@@ -179,6 +179,7 @@ stopifnot(pir.check(function() {
   f <- function() 42L
   (function(x) x())(f)
 }, Returns42L))
+# Note: The next 2 tests break when sandboxing is enabled
 stopifnot(pir.check(function() {
   a <- function() 41L
   b <- function() 1L
@@ -346,7 +347,7 @@ stopifnot(pir.check(function() {
     x <- x + i
   x
 }, NoAsInt))
-                     
+
 # More dead instruction removal
 stopifnot(!pir.check(function(x) {
   x == 4

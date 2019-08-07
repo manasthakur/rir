@@ -1,6 +1,7 @@
 #include "rir_2_pir.h"
 #include "../../analysis/query.h"
 #include "../../analysis/verifier.h"
+#include "../../parameter.h"
 #include "../../pir/pir_impl.h"
 #include "../../transform/insert_cast.h"
 #include "../../util/ConvertAssumptions.h"
@@ -143,6 +144,19 @@ Checkpoint* Rir2Pir::addCheckpoint(rir::Code* srcCode, Opcode* pos,
     // anymore) and checkpoints in eagerly inlined promises are wrong. So for
     // now we do not emit them in promises!
     assert(!inPromise());
+
+    // Add deopt after instructions which expect an earlier instruction before
+    while (true) {
+        Opcode* nextPos = pos;
+        BC next = BC::advance(&nextPos, srcCode);
+        if (int shift = next.moveBeforeDeopt())
+            pos -= shift;
+        else if (next.moveAfterDeopt())
+            pos = nextPos;
+        else
+            break;
+    }
+
     return insert.emitCheckpoint(srcCode, pos, stack);
 }
 
@@ -343,6 +357,18 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         callTargetFeedback[target].second = bc.immediate.callFeedback;
         break;
     }
+
+    case Opcode::begin_sandbox_record_:
+        insert.sandbox.startSandboxing();
+        break;
+
+    case Opcode::end_sandbox_record_:
+        for (auto target : insert.sandbox.sandboxed()) {
+            assert(target->safeFeedback == ObservedSafe::Unknown);
+            target->safeFeedback = bc.immediate.safeFeedback;
+        }
+        insert.sandbox.stopSandboxing();
+        break;
 
     case Opcode::mk_eager_promise_:
     case Opcode::mk_promise_: {
@@ -892,6 +918,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
     case Opcode::ldvar_noforce_stubbed_:
     case Opcode::stvar_stubbed_:
     case Opcode::assert_type_:
+    case Opcode::force_sb_:
         log.unsupportedBC("Unsupported BC (are you recompiling?)", bc);
         assert(false && "Recompiling PIR not supported for now.");
 
@@ -1113,16 +1140,16 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) const {
                     cur.stack.push(
                         insert(new MkFunCls(innerF->owner(), dt, insert.env)));
 
-                    // Skip those instructions
-                    finger = pc;
-                    skip = true;
-                },
-                []() {
-                    // If the closure does not compile, we
-                    // can still call the unoptimized
-                    // version (which is what happens on
-                    // `tryRunCurrentBC` below)
-                });
+                                         // Skip those instructions
+                                         finger = pc;
+                                         skip = true;
+                                     },
+                                     []() {
+                                         // If the closure does not compile, we
+                                         // can still call the unoptimized
+                                         // version (which is what happens on
+                                         // `tryRunCurrentBC` below)
+                                     });
         });
 
         if (!skip) {

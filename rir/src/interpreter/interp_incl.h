@@ -4,6 +4,7 @@
 #include "R/r.h"
 #include "ir/BC_inc.h"
 
+extern "C" Rboolean R_Visible;
 const static uint32_t NO_DEOPT_INFO = (uint32_t)-1;
 
 namespace rir {
@@ -12,6 +13,8 @@ struct InterpreterInstance;
 struct Code;
 struct CallContext;
 class Configurations;
+
+enum class SandboxMode { None, Record, Sandbox };
 
 bool isValidClosureSEXP(SEXP closure);
 
@@ -26,11 +29,13 @@ void initializeRuntime();
 InterpreterInstance* globalContext();
 Configurations* pirConfigurations();
 
-SEXP evalRirCodeExtCaller(Code* c, InterpreterInstance* ctx, SEXP env);
+SEXP evalRirCodeExtCaller(Code* c, InterpreterInstance* ctx, SEXP env,
+                          SandboxMode mode = SandboxMode::None);
 SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                  const CallContext* callContext);
 
 SEXP rirEval_f(SEXP f, SEXP env);
+SEXP rirEval(SEXP what, SEXP env, SandboxMode mode);
 SEXP rirApplyClosure(SEXP, SEXP, SEXP, SEXP, SEXP);
 
 SEXP argsLazyCreation(void* rirDataWrapper);

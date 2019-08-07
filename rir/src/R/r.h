@@ -80,4 +80,23 @@ LibExtern AccuracyInfo R_AccuracyInfo;
 
 extern int R_PPStackTop;
 
+typedef struct RPRSTACK {
+    SEXP promise;
+    struct RPRSTACK* next;
+} RPRSTACK;
+
+extern "C" uintptr_t R_CStackLimit;
+extern "C" uintptr_t R_OldCStackLimit;
+extern "C" uintptr_t R_CStackStart;
+extern "C" int R_CStackDir;
+extern "C" NORET void R_SignalCStackOverflow(intptr_t);
+
+#undef R_CheckStack
+RIR_INLINE void R_CheckStack() {
+    int dummy;
+    intptr_t usage = R_CStackDir * (R_CStackStart - (uintptr_t)&dummy);
+    if (R_CStackLimit != (uintptr_t)(-1) && usage > ((intptr_t)R_CStackLimit))
+        R_SignalCStackOverflow(usage);
+}
+
 #endif

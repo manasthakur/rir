@@ -607,6 +607,9 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_,
         // The ldvarForUpdate BC increments the named count if the target is
         // not local to the current environment.
 
+        if (Compiler::sandbox && Compiler::profile)
+            cs << BC::beginSandboxRecord();
+
         if (superAssign) {
             cs << BC::ldvarSuper(target);
         } else {
@@ -617,8 +620,11 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_,
                 cs << BC::ldvar(target);
         }
 
-        if (Compiler::profile)
+        if (Compiler::profile) {
             cs << BC::recordType();
+            if (Compiler::sandbox)
+                cs << BC::endSandboxRecord();
+        }
 
         // And index
         compileExpr(ctx, *idx);
@@ -1140,12 +1146,18 @@ void compileGetvar(CompilerContext& ctx, SEXP name, bool needsVisible = true) {
     } else if (name == R_MissingArg) {
         cs << BC::push(R_MissingArg);
     } else {
+        if (Compiler::sandbox && Compiler::profile)
+            cs << BC::beginSandboxRecord();
+
         if (ctx.code.top()->isCached(name))
             cs << BC::ldvarCached(name, ctx.code.top()->cacheSlotFor(name));
         else
             cs << BC::ldvar(name);
-        if (Compiler::profile)
+        if (Compiler::profile) {
             cs << BC::recordType();
+            if (Compiler::sandbox)
+                cs << BC::endSandboxRecord();
+        }
     }
     if (needsVisible)
         cs << BC::visible();
@@ -1247,6 +1259,9 @@ bool Compiler::unsoundOpts =
 bool Compiler::profile =
     !(getenv("RIR_PROFILING") &&
       std::string(getenv("RIR_PROFILING")).compare("off") == 0);
+
+bool Compiler::sandbox = getenv("RIR_SANDBOX") &&
+                         std::string(getenv("RIR_SANDBOX")).compare("on") == 1;
 
 bool Compiler::loopPeelingEnabled = true;
 

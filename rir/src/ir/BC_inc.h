@@ -164,6 +164,7 @@ class BC {
         LocalsCopy loc_cpy;
         ObservedCallees callFeedback;
         ObservedValues typeFeedback;
+        ObservedSafe safeFeedback;
         PoolAndCachePositionRange poolAndCache;
         CachePositionRange cacheIdx;
         ImmediateArguments() {
@@ -337,7 +338,7 @@ class BC {
     // ==== Factory methods
     // to create new BC objects, which can be streamed to a CodeStream
 #define V(NESTED, name, name_) inline static BC name();
-BC_NOARGS(V, _)
+    BC_NOARGS(V, _)
 #undef V
     inline static BC recordCall();
     inline static BC recordBinop();
@@ -399,6 +400,7 @@ BC_NOARGS(V, _)
     inline static BC mkEnv(const std::vector<SEXP>& names,
                            SignedImmediate contextPos, bool stub);
     inline static BC clearBindingCache(CacheIdx start, unsigned size);
+    inline static BC endSandboxRecord();
     inline static BC assertType(pir::PirType typ, SignedImmediate instr);
 
     inline static BC decode(Opcode* pc, const Code* code) {
@@ -413,6 +415,9 @@ BC_NOARGS(V, _)
         cur.decodeFixlen(pc);
         return cur;
     }
+
+    int moveBeforeDeopt();
+    bool moveAfterDeopt();
 
   private:
     // Some Bytecodes need extra information. For example in the case of the
@@ -693,8 +698,11 @@ BC_NOARGS(V, _)
                    sizeof(ObservedValues));
             break;
 #define V(NESTED, name, name_) case Opcode::name_##_:
-BC_NOARGS(V, _)
+            BC_NOARGS(V, _)
 #undef V
+            break;
+        case Opcode::end_sandbox_record_:
+            memcpy(&immediate.safeFeedback, pc, sizeof(ObservedSafe));
             break;
         case Opcode::assert_type_:
             memcpy(&immediate.assertTypeArgs, pc, sizeof(AssertTypeArgs));

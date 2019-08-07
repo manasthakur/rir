@@ -67,7 +67,9 @@
     V(NESTED, extract2_2, extract2_2)                                          \
     V(NESTED, swap, swap)                                                      \
     V(NESTED, isstubenv, isstubenv)                                            \
-    V(NESTED, return_, return )
+    V(NESTED, return_, return )                                                \
+    V(NESTED, beginSandboxRecord, begin_sandbox_record)                        \
+    V(NESTED, forceSb, force_sb)
 
 #undef V_SIMPLE_INSTRUCTION
 

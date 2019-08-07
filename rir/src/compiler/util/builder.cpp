@@ -5,6 +5,27 @@
 namespace rir {
 namespace pir {
 
+void Builder::Sandbox::startSandboxing() {
+    assert(!isSandboxing);
+    assert(sandboxed_.size() == 0);
+    isSandboxing = true;
+}
+
+void Builder::Sandbox::record(Instruction* instr) {
+    if (isSandboxing)
+        sandboxed_.insert(instr);
+}
+
+const std::unordered_set<Instruction*>& Builder::Sandbox::sandboxed() {
+    return sandboxed_;
+}
+
+void Builder::Sandbox::stopSandboxing() {
+    assert(isSandboxing);
+    isSandboxing = false;
+    sandboxed_.clear();
+}
+
 BB* Builder::createBB() { return new BB(code, code->nextBBId++); }
 
 void Builder::markDone(BB* bb) {
@@ -56,6 +77,7 @@ void Builder::add(Instruction* i) {
     default: {}
     }
     bb->append(i);
+    sandbox.record(i);
 }
 
 FrameState* Builder::registerFrameState(rir::Code* srcCode, Opcode* pos,
