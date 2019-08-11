@@ -42,19 +42,6 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
     Rf_PrintValue(e);
 #endif
     // From GNU-R eval
-    static unsigned evalcount = 0;
-    R_Visible = (Rboolean) true;
-    /* this is needed even for self-evaluating objects or something like
-       'while (TRUE) NULL' will not be interruptable */
-    if (evalcount++ > 1000) { /* was 100 before 2.8.0 */
-        R_CheckUserInterrupt();
-#ifndef IMMEDIATE_FINALIZERS
-        /* finalizers are run here since this should only be called at
-           points where running arbitrary code should be safe */
-        R_RunPendingFinalizers();
-#endif
-        evalcount = 0;
-    }
     /* handle self-evaluating objects with minimal overhead */
     switch (TYPEOF(e)) {
     case NILSXP:
@@ -99,6 +86,14 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
     switch (TYPEOF(e)) {
     case EXTERNALSXP:
         res = rirEval(e, env, mode);
+        break;
+    case BCODESXP:
+        if (mode == SandboxMode::Record)
+            ctx->recordUnsafe();
+        if (mode == SandboxMode::Sandbox) // Don't actually evaluate
+            res = NULL;
+        else
+            res = bcEval(e, env, (Rboolean) true);
         break;
     default:
         if (mode == SandboxMode::Record)
