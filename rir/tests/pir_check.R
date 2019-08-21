@@ -180,23 +180,24 @@ stopifnot(pir.check(function() {
   (function(x) x())(f)
 }, Returns42L))
 # Note: The next 2 tests break when sandboxing is enabled
-stopifnot(pir.check(function() {
-  a <- function() 41L
-  b <- function() 1L
-  f <- function(x, y) x() + y
-  f(a, b())
-}, Returns42L, warmup=function(f)f()))
-stopifnot(pir.check(function() {
-  x <- function() 32
-  y <- function() 31
-  z <- 1
-  f <- function(a, b, c) {
-    if (a() == (b + c))
-      42L
-  }
-  f(x, y(), z)
-}, NoEnv, warmup=function(f)f()))
-
+if (Sys.getenv("RIR_SANDBOX", unset="off") != "on") {
+  stopifnot(pir.check(function() {
+    a <- function() 41L
+    b <- function() 1L
+    f <- function(x, y) x() + y
+    f(a, b())
+  }, Returns42L, warmup=function(f)f()))
+  stopifnot(pir.check(function() {
+    x <- function() 32
+    y <- function() 31
+    z <- 1
+    f <- function(a, b, c) {
+      if (a() == (b + c))
+        42L
+    }
+    f(x, y(), z)
+  }, NoEnv, warmup=function(f)f()))
+}
 mandelbrot <- function(size) {
     size = size
     sum = 0

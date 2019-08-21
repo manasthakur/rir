@@ -3233,6 +3233,8 @@ bool LowerFunctionLLVM::tryCompile() {
 
             case Tag::Int3:
             case Tag::PrintInvocation:
+            case Tag::BeginSandbox:
+            case Tag::EndSandbox:
             case Tag::IDiv:
             case Tag::Extract2_2D:
             case Tag::Extract1_2D:

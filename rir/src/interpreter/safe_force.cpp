@@ -87,14 +87,6 @@ static SEXP promiseEval(SEXP e, SEXP env, InterpreterInstance* ctx,
     case EXTERNALSXP:
         res = rirEval(e, env, mode);
         break;
-    case BCODESXP:
-        if (mode == SandboxMode::Record)
-            ctx->recordUnsafe();
-        if (mode == SandboxMode::Sandbox) // Don't actually evaluate
-            res = NULL;
-        else
-            res = bcEval(e, env, (Rboolean) true);
-        break;
     default:
         if (mode == SandboxMode::Record)
             ctx->recordUnsafe();
