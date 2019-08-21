@@ -67,6 +67,10 @@ void BC::write(CodeStream& cs) const {
         cs.insert(immediate.guard_fun_args);
         return;
 
+    case Opcode::record_deopt_:
+        cs.insert(immediate.deoptReason);
+        return;
+
     case Opcode::call_:
         cs.insert(immediate.callFixedArgs);
         break;
@@ -236,14 +240,8 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
                 Pool::insert(ReadItem(refTable, inp));
             break;
         case Opcode::deopt_: {
-            DeoptMetadata* meta =
-                DeoptMetadata::deserialize(code, refTable, inp);
-            size_t size =
-                sizeof(DeoptMetadata) + meta->numFrames * sizeof(FrameInfo);
-            SEXP store = Rf_allocVector(RAWSXP, size);
-            memcpy(DATAPTR(store), meta, size);
-            i.pool = Pool::insert(store);
-            ::operator delete(meta, size);
+            SEXP meta = DeoptMetadata::deserialize(code, refTable, inp);
+            i.pool = Pool::insert(meta);
             break;
         }
         case Opcode::assert_type_:
@@ -254,6 +252,7 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
             else
                 i.assertTypeArgs.instr = -1;
             break;
+        case Opcode::record_deopt_:
         case Opcode::record_call_:
         case Opcode::record_type_:
         case Opcode::mk_promise_:
@@ -390,6 +389,7 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
                 WriteItem(Pool::get(i.assertTypeArgs.instr), refTable, out);
             }
             break;
+        case Opcode::record_deopt_:
         case Opcode::record_call_:
         case Opcode::record_type_:
         case Opcode::mk_promise_:
@@ -582,6 +582,12 @@ void BC::print(std::ostream& out) const {
         SEXP name = Pool::get(immediate.guard_fun_args.name);
         out << CHAR(PRINTNAME(name))
             << " == " << Pool::get(immediate.guard_fun_args.expected);
+        break;
+    }
+    case Opcode::record_deopt_: {
+        out << immediate.deoptReason.reason << " @ "
+            << immediate.deoptReason.srcCode << "+"
+            << immediate.deoptReason.originOffset;
         break;
     }
     case Opcode::popn_:

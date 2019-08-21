@@ -69,11 +69,11 @@ void printPaddedInstructionName(std::ostream& out, const std::string& name) {
 void printPaddedTypeAndRef(std::ostream& out, const Instruction* i) {
     std::ostringstream buf;
     buf << i->type;
-    if (!i->typeFeedback.isVoid()) {
-        if (i->type == i->typeFeedback)
+    if (!i->typeFeedback.type.isVoid()) {
+        if (i->type == i->typeFeedback.type)
             buf << "<>";
         else
-            buf << "<" << i->typeFeedback << ">";
+            buf << "<" << i->typeFeedback.type << ">";
     }
     out << std::left << std::setw(15) << buf.str() << " ";
     buf.str("");
@@ -259,7 +259,8 @@ void Instruction::replaceDominatedUses(Instruction* replace) {
 
     // Propagate typefeedback
     if (auto rep = Instruction::Cast(replace)) {
-        if (!rep->type.isA(typeFeedback) && rep->typeFeedback.isVoid())
+        if (!rep->type.isA(typeFeedback.type) &&
+            rep->typeFeedback.type.isVoid())
             rep->typeFeedback = typeFeedback;
     }
 }
@@ -282,7 +283,8 @@ void Instruction::replaceUsesIn(Value* replace, BB* start) {
 
     // Propagate typefeedback
     if (auto rep = Instruction::Cast(replace)) {
-        if (!rep->type.isA(typeFeedback) && rep->typeFeedback.isVoid())
+        if (!rep->type.isA(typeFeedback.type) &&
+            rep->typeFeedback.type.isVoid())
             rep->typeFeedback = typeFeedback;
     }
 }
@@ -411,6 +413,16 @@ void MkArg::printArgs(std::ostream& out, bool tty) const {
     if (noReflection)
         out << " (!refl)";
     out << ", ";
+}
+
+bool MkArg::usesPromEnv() const {
+    if (!isEager()) {
+        BB* bb = prom()->entry;
+        if (bb->size() > 0 && LdFunctionEnv::Cast(*bb->begin())) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void Missing::printArgs(std::ostream& out, bool tty) const {

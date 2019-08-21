@@ -38,7 +38,6 @@
     BINOP_INSTRUCTIONS(V)                                                      \
     VECTOR_RW_INSTRUCTIONS(V)                                                  \
     V(LdFun)                                                                   \
-    V(Seq)                                                                     \
     V(LdVar)                                                                   \
     V(LdConst)                                                                 \
     V(LdArg)                                                                   \
@@ -90,6 +89,7 @@
     V(Visible)                                                                 \
     V(Invisible)                                                               \
     V(PirCopy)                                                                 \
+    V(RecordDeoptReason)                                                       \
     V(BeginSandbox)                                                            \
     V(EndSandbox)                                                              \
     V(Nop)

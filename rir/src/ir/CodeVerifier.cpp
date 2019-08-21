@@ -79,7 +79,6 @@ static Sources hasSources(Opcode bc) {
     case Opcode::extract1_2_:
     case Opcode::extract2_1_:
     case Opcode::extract2_2_:
-    case Opcode::seq_:
     case Opcode::add_:
     case Opcode::mul_:
     case Opcode::div_:
@@ -177,6 +176,7 @@ static Sources hasSources(Opcode bc) {
     case Opcode::record_call_:
     case Opcode::record_type_:
     case Opcode::deopt_:
+    case Opcode::record_deopt_:
     case Opcode::pop_context_:
     case Opcode::push_context_:
     case Opcode::ceil_:

@@ -31,6 +31,7 @@ static jit_type_t sxp2_void[3] = {sxp, sxp, jit_type_void_ptr};
 
 static jit_type_t sxp3_int[4] = {sxp, sxp, sxp, jit_type_int};
 
+static jit_type_t sxp4_int[5] = {sxp, sxp, sxp, sxp, jit_type_int};
 static jit_type_t sxp3_int2[5] = {sxp, sxp, sxp, jit_type_int, jit_type_int};
 
 static jit_type_t ptr1[1] = {jit_type_void_ptr};
@@ -75,12 +76,12 @@ NativeBuiltin NativeBuiltins::createMissingBindingCell = {
     jit_type_create_signature(jit_abi_cdecl, sxp, sxp2, 2, 0),
 };
 
-SEXP createEnvironmentImpl(SEXP parent, SEXP arglist, int contextPos) {
+SEXP createEnvironmentImpl(SEXP parent, SEXP arglist, SEXP envArglist,
+                           int contextPos) {
     SLOWASSERT(TYPEOF(parent) == ENVSXP);
     SLOWASSERT(TYPEOF(arglist) == LISTSXP || arglist == R_NilValue);
-    PROTECT(arglist);
-    SEXP res = Rf_NewEnvironment(R_NilValue, arglist, parent);
-    UNPROTECT(1);
+    SLOWASSERT(TYPEOF(envArglist) == LISTSXP || envArglist == R_NilValue);
+    SEXP res = Rf_NewEnvironment(R_NilValue, envArglist, parent);
 
     if (contextPos > 0) {
         if (auto cptr = getFunctionContext(contextPos - 1)) {
@@ -96,8 +97,8 @@ SEXP createEnvironmentImpl(SEXP parent, SEXP arglist, int contextPos) {
 NativeBuiltin NativeBuiltins::createEnvironment = {
     "createEnvironment",
     (void*)&createEnvironmentImpl,
-    3,
-    jit_type_create_signature(jit_abi_cdecl, sxp, sxp2_int, 3, 0),
+    4,
+    jit_type_create_signature(jit_abi_cdecl, sxp, sxp3_int, 4, 0),
 };
 
 SEXP createStubEnvironmentImpl(SEXP parent, int n, Immediate* names,
@@ -595,6 +596,12 @@ static SEXP binopEnvImpl(SEXP lhs, SEXP rhs, SEXP env, Immediate srcIdx,
     case BinopKind::COLON:
         OPERATION_FALLBACK(":");
         break;
+    case BinopKind::MOD:
+        OPERATION_FALLBACK("%%");
+        break;
+    case BinopKind::POW:
+        OPERATION_FALLBACK("^");
+        break;
     }
     UNPROTECT(1);
     SLOWASSERT(res);
@@ -667,6 +674,12 @@ static SEXP binopImpl(SEXP lhs, SEXP rhs, BinopKind kind) {
         break;
     case BinopKind::COLON:
         OPERATION_FALLBACK(":");
+        break;
+    case BinopKind::MOD:
+        OPERATION_FALLBACK("%%");
+        break;
+    case BinopKind::POW:
+        OPERATION_FALLBACK("^");
         break;
     }
     SLOWASSERT(res);
@@ -758,15 +771,24 @@ NativeBuiltin NativeBuiltins::length = {
 };
 
 void deoptImpl(Code* c, SEXP cls, DeoptMetadata* m, R_bcstack_t* args) {
-    if (!pir::Parameter::DEOPT_CHAOS && cls) {
-        // TODO: this version is still reachable from static call inline
-        // caches. Thus we need to preserve it forever. We need some
-        // dependency management here.
-        Pool::insert(c->container());
-        // remove the deoptimized function. Unless on deopt chaos,
-        // always recompiling would just blow testing time...
-        auto dt = DispatchTable::unpack(BODY(cls));
-        dt->remove(c);
+    if (!pir::Parameter::DEOPT_CHAOS) {
+        if (cls) {
+            // TODO: this version is still reachable from static call inline
+            // caches. Thus we need to preserve it forever. We need some
+            // dependency management here.
+            Pool::insert(c->container());
+            // remove the deoptimized function. Unless on deopt chaos,
+            // always recompiling would just blow testing time...
+            auto dt = DispatchTable::unpack(BODY(cls));
+            dt->remove(c);
+        } else {
+            // In some cases we don't know the callee here, so we can't properly
+            // remove the deoptimized code. But we can kill the native code,
+            // this will cause a fallback to rir, which will then be able to
+            // deoptimize properly.
+            // TODO: find a way to always know the closure in native code!
+            c->nativeCode = nullptr;
+        }
     }
     assert(m->numFrames >= 1);
     size_t stackHeight = 0;
@@ -774,6 +796,7 @@ void deoptImpl(Code* c, SEXP cls, DeoptMetadata* m, R_bcstack_t* args) {
         stackHeight += m->frames[i].stackSize + 1;
     }
 
+    c->registerDeopt();
     SEXP env =
         ostack_at(ctx, stackHeight - m->frames[m->numFrames - 1].stackSize - 1);
     CallContext call(c, cls, /* nargs */ -1,
@@ -792,6 +815,12 @@ NativeBuiltin NativeBuiltins::deopt = {
     (void*)&deoptImpl,
     4,
     jit_type_create_signature(jit_abi_cdecl, jit_type_void, deoptType, 4, 0),
+};
+NativeBuiltin NativeBuiltins::recordDeopt = {
+    "recordDeopt",
+    (void*)&recordDeoptReason,
+    2,
+    nullptr,
 };
 
 void assertFailImpl(const char* msg) {
@@ -900,8 +929,17 @@ static SEXP nativeCallTrampolineImpl(SEXP callee, rir::Function* fun,
     SLOWASSERT(env == symbol::delayedEnv || TYPEOF(env) == ENVSXP ||
                LazyEnvironment::check(env) || env == R_NilValue);
 
+    if (fun->dead || !fun->body()->nativeCode) {
+        return callImpl(fun->body(), astP, callee, env, nargs,
+                        Assumptions().toI());
+    }
+
+    auto missing = fun->signature().numArguments - nargs;
+    for (size_t i = 0; i < missing; ++i)
+        ostack_push(globalContext(), R_MissingArg);
+
     auto t = R_BCNodeStackTop;
-    R_bcstack_t* args = ostack_cell_at(ctx, nargs - 1);
+    R_bcstack_t* args = ostack_cell_at(ctx, nargs + missing - 1);
     auto ast = cp_pool_at(globalContext(), astP);
 
     ArgsLazyData lazyArgs(nargs, args, nullptr, globalContext());
@@ -931,6 +969,8 @@ static SEXP nativeCallTrampolineImpl(SEXP callee, rir::Function* fun,
 
     UNPROTECT(2);
     assert(t == R_BCNodeStackTop);
+
+    ostack_popn(globalContext(), missing);
     return result;
 }
 
@@ -940,5 +980,129 @@ NativeBuiltin NativeBuiltins::nativeCallTrampoline = {
     5,
     nullptr,
 };
+
+SEXP subassign11Impl(SEXP vector, SEXP index, SEXP value, SEXP env,
+                     Immediate srcIdx) {
+    if (MAYBE_SHARED(vector))
+        vector = Rf_duplicate(vector);
+    PROTECT(vector);
+    SEXP args = CONS_NR(vector, CONS_NR(index, CONS_NR(value, R_NilValue)));
+    SET_TAG(CDDR(args), symbol::value);
+    PROTECT(args);
+    SEXP res = nullptr;
+    SEXP call = src_pool_at(globalContext(), srcIdx);
+    RCNTXT assignContext;
+    Rf_begincontext(&assignContext, CTXT_RETURN, call, env, ENCLOS(env), args,
+                    symbol::AssignBracket);
+    if (isObject(vector))
+        res = dispatchApply(call, vector, args, symbol::AssignBracket, env,
+                            globalContext());
+    if (!res) {
+        res = do_subassign_dflt(call, symbol::AssignBracket, args, env);
+        SET_NAMED(res, 0);
+    }
+    Rf_endcontext(&assignContext);
+    UNPROTECT(2);
+    return res;
+}
+
+NativeBuiltin NativeBuiltins::subassign11 = {
+    "subassign1_1D",
+    (void*)subassign11Impl,
+    5,
+    jit_type_create_signature(jit_abi_cdecl, sxp, sxp4_int, 5, 0),
+};
+
+SEXP subassign21Impl(SEXP vec, SEXP idx, SEXP val, SEXP env, Immediate srcIdx) {
+    if (MAYBE_SHARED(vec))
+        vec = Rf_duplicate(vec);
+    PROTECT(vec);
+
+    SEXP args = CONS_NR(vec, CONS_NR(idx, CONS_NR(val, R_NilValue)));
+    SET_TAG(CDDR(args), symbol::value);
+    PROTECT(args);
+    SEXP res = nullptr;
+    SEXP call = src_pool_at(globalContext(), srcIdx);
+    RCNTXT assignContext;
+    Rf_begincontext(&assignContext, CTXT_RETURN, call, env, ENCLOS(env), args,
+                    symbol::AssignDoubleBracket);
+    if (isObject(vec))
+        res = dispatchApply(call, vec, args, symbol::AssignDoubleBracket, env,
+                            globalContext());
+    if (!res) {
+        res = do_subassign2_dflt(call, symbol::AssignDoubleBracket, args, env);
+        SET_NAMED(res, 0);
+    }
+    Rf_endcontext(&assignContext);
+    UNPROTECT(2);
+    return res;
+}
+
+NativeBuiltin NativeBuiltins::subassign21 = {
+    "subassign2_1D",
+    (void*)subassign21Impl,
+    5,
+    jit_type_create_signature(jit_abi_cdecl, sxp, sxp4_int, 5, 0),
+};
+
+int forSeqSizeImpl(SEXP seq) {
+    // TODO: we should extract the length just once at the begining of
+    // the loop and generally have somthing more clever here...
+    int res;
+    if (Rf_isVector(seq)) {
+        res = LENGTH(seq);
+    } else if (Rf_isList(seq) || isNull(seq)) {
+        res = Rf_length(seq);
+    } else {
+        Rf_errorcall(R_NilValue, "invalid for() loop sequence");
+    }
+    // TODO: Even when the for loop sequence is an object, R won't
+    // dispatch on it. Since in RIR we use the normals extract2_1
+    // BC on it, we would. To prevent this we strip the object
+    // flag here. What we should do instead, is use a non-dispatching
+    // extract BC.
+    if (isObject(seq)) {
+        seq = Rf_duplicate(seq);
+        SET_OBJECT(seq, 0);
+        ostack_set(ctx, 0, seq);
+    }
+    return res;
+}
+
+NativeBuiltin NativeBuiltins::forSeqSize = {
+    "forSeqSize",
+    (void*)&forSeqSizeImpl,
+    2,
+    nullptr,
+};
+
+void initClosureContextImpl(SEXP ast, RCNTXT* cntxt, SEXP sysparent, SEXP op) {
+    if (R_GlobalContext->callflag == CTXT_GENERIC)
+        Rf_begincontext(cntxt, CTXT_RETURN, ast, symbol::delayedEnv,
+                        R_GlobalContext->sysparent, symbol::delayedArglist, op);
+    else
+        Rf_begincontext(cntxt, CTXT_RETURN, ast, symbol::delayedEnv, sysparent,
+                        symbol::delayedArglist, op);
+}
+
+NativeBuiltin NativeBuiltins::initClosureContext = {
+    "initClosureContext",
+    (void*)&initClosureContextImpl,
+    4,
+    nullptr,
+};
+
+static void endClosureContextImpl(RCNTXT* cntxt, SEXP result) {
+    cntxt->returnValue = result;
+    Rf_endcontext(cntxt);
+}
+
+NativeBuiltin NativeBuiltins::endClosureContext = {
+    "endClosureContext",
+    (void*)&endClosureContextImpl,
+    2,
+    nullptr,
+};
+
 }
 }

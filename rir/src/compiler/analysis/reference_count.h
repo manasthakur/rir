@@ -234,8 +234,9 @@ class StaticReferenceCount : public StaticAnalysis<AUses> {
         //
         case Tag::Return:
         case Tag::Length:
-        case Tag::Seq:
         case Tag::Colon:
+        case Tag::CastType:
+        case Tag::IsType:
         case Tag::IsObject:
         case Tag::IsEnvStub:
         case Tag::Deopt:

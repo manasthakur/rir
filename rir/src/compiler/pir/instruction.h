@@ -136,6 +136,13 @@ class Instruction : public Value {
         return effects.contains(Effect::Reflection);
     }
 
+    struct TypeFeedback {
+        PirType type = PirType::optimistic();
+        rir::Code* srcCode = nullptr;
+        Opcode* origin = nullptr;
+    };
+    TypeFeedback typeFeedback;
+
     Effects getObservableEffects() const {
         auto e = effects;
         // Those are effects, and we are required to have them in the correct
@@ -922,29 +929,8 @@ class FLIE(MkArg, 2, Effects::None()) {
     size_t gvnBase() const override { return hash_combine(tagHash(), prom_); }
 
     int minReferenceCount() const override { return MAX_REFCOUNT; }
-};
 
-class FLI(Seq, 3, Effects::Any()) {
-  public:
-    Seq(Value* start, Value* end, Value* step)
-        : FixedLenInstruction(
-              PirType::any(),
-              // TODO: require scalars, but this needs some cast support
-              {{PirType::val(), PirType::val(), PirType::val()}},
-              {{start, end, step}}) {}
-
-    PirType inferType(const GetType& getType) const override final {
-        return ifNonObjectArgs(
-            getType, type & PirType::num().notObject().notMissing(), type);
-    }
-    Effects inferEffects(const GetType& getType) const override final {
-        return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
-    }
-    size_t gvnBase() const override {
-        if (effects.contains(Effect::ExecuteCode))
-            return 0;
-        return tagHash();
-    }
+    bool usesPromEnv() const;
 };
 
 class FLIE(MkCls, 4, Effects::None()) {
@@ -1074,13 +1060,13 @@ class FLIE(Subassign1_1D, 4, Effects::Any()) {
               PirType::valOrLazy(),
               {{PirType::val(), PirType::val(), PirType::val()}},
               {{val, vec, idx}}, env, srcIdx) {}
-    Value* rhs() const { return arg(0).val(); }
-    Value* lhs() const { return arg(1).val(); }
+    Value* val() const { return arg(0).val(); }
+    Value* vector() const { return arg(1).val(); }
     Value* idx() const { return arg(2).val(); }
 
     PirType inferType(const GetType& getType) const override final {
-        return ifNonObjectArgs(getType,
-                               type & (getType(rhs()) | getType(lhs())), type);
+        return ifNonObjectArgs(
+            getType, type & (getType(val()) | getType(vector())), type);
     }
     Effects inferEffects(const GetType& getType) const override final {
         return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
@@ -1095,13 +1081,13 @@ class FLIE(Subassign2_1D, 4, Effects::Any()) {
               PirType::valOrLazy(),
               {{PirType::val(), PirType::val(), PirType::val()}},
               {{val, vec, idx}}, env, srcIdx) {}
-    Value* rhs() const { return arg(0).val(); }
-    Value* lhs() const { return arg(1).val(); }
+    Value* val() const { return arg(0).val(); }
+    Value* vector() const { return arg(1).val(); }
     Value* idx() const { return arg(2).val(); }
 
     PirType inferType(const GetType& getType) const override final {
-        return ifNonObjectArgs(getType,
-                               type & (getType(rhs()) | getType(lhs())), type);
+        return ifNonObjectArgs(
+            getType, type & (getType(val()) | getType(vector())), type);
     }
     Effects inferEffects(const GetType& getType) const override final {
         return ifNonObjectArgs(getType, effects & errorWarnVisible, effects);
@@ -1637,6 +1623,14 @@ struct RirStack {
     Stack::iterator end() { return stack.end(); }
 };
 
+class FLI(RecordDeoptReason, 1, Effects::Any()) {
+  public:
+    DeoptReason reason;
+    RecordDeoptReason(const DeoptReason& r, Value* value)
+        : FixedLenInstruction(PirType::voyd(), {{PirType::any()}}, {{value}}),
+          reason(r) {}
+};
+
 /*
  *  Collects metadata about the current state of variables
  *  eventually needed for deoptimization purposes
@@ -1979,10 +1973,15 @@ class FLI(PopContext, 2,
           Effects() | Effect::NotSandboxable | Effect::ChangesContexts) {
   public:
     PopContext(Value* res, PushContext* push)
-        : FixedLenInstruction(PirType::voyd(),
+        : FixedLenInstruction(PirType::any(),
                               {{PirType::any(), NativeType::context}},
                               {{res, push}}) {}
-    PushContext* push() { return PushContext::Cast(arg<1>().val()); }
+    PushContext* push() const { return PushContext::Cast(arg<1>().val()); }
+    Value* result() const { return arg<0>().val(); }
+
+    PirType inferType(const GetType& getType) const override final {
+        return getType(result());
+    }
 };
 
 class VLI(Phi, Effects::None()) {
@@ -2071,6 +2070,7 @@ class Deopt : public FixedLenInstruction<Tag::Deopt, Deopt, 1, Effects::Any(),
 
 class FLI(Assume, 2, Effect::TriggerDeopt) {
   public:
+    std::vector<std::pair<rir::Code*, Opcode*>> feedbackOrigin;
     bool assumeTrue = true;
     Assume(Value* test, Value* checkpoint)
         : FixedLenInstruction(PirType::voyd(),
