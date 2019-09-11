@@ -34,6 +34,7 @@ Function* Function::deserialize(SEXP refTable, R_inpstream_t inp) {
     fun->unoptimizable = InChar(inp);
     fun->uninlinable = InChar(inp);
     fun->dead = InChar(inp);
+    fun->reflectGuard = (ReflectGuard)InChar(inp);
     UNPROTECT(protectCount);
     return fun;
 }
@@ -55,6 +56,7 @@ void Function::serialize(SEXP refTable, R_outpstream_t out) const {
     OutChar(out, unoptimizable ? 1 : 0);
     OutChar(out, uninlinable ? 1 : 0);
     OutChar(out, dead ? 1 : 0);
+    OutChar(out, (int)reflectGuard);
 }
 
 void Function::disassemble(std::ostream& out) {

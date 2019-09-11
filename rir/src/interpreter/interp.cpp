@@ -331,7 +331,9 @@ static RIR_INLINE SEXP rirCallTrampoline(const CallContext& call, Function* fun,
     Code* code = fun->body();
     // Pass &cntxt.cloenv, to let evalRirCode update the env of the current
     // context
+    BEGIN_TRACK_ENV(env);
     SEXP result = rirCallTrampoline_(cntxt, call, code, env, ctx);
+    END_TRACK_ENV();
     PROTECT(result);
 
     endClosureDebug(call.ast, call.callee, env);
@@ -442,7 +444,9 @@ static SEXP inlineContextTrampoline(Code* c, const CallContext* callCtx,
     };
 
     // execute the inlined function
+    BEGIN_TRACK_ENV(symbol::delayedEnv);
     auto res = trampoline();
+    END_TRACK_ENV();
     endClosureContext(&cntxt, res);
     return res;
 }
@@ -456,8 +460,10 @@ static RIR_INLINE SEXP legacySpecialCall(CallContext& call,
     int flag = getFlag(call.callee);
     R_Visible = static_cast<Rboolean>(flag != 1);
     // call it with the AST only
-    SEXP result = f(call.ast, call.callee, CDR(call.ast),
-                    materializeCallerEnv(call, ctx));
+    SEXP env = materializeCallerEnv(call, ctx);
+    BEGIN_TRACK_ENV(env);
+    SEXP result = f(call.ast, call.callee, CDR(call.ast), env);
+    END_TRACK_ENV();
     if (flag < 2)
         R_Visible = static_cast<Rboolean>(flag != 1);
     return result;
@@ -472,8 +478,10 @@ static RIR_INLINE SEXP legacyCallWithArgslist(CallContext& call, SEXP argslist,
         if (flag < 2)
             R_Visible = static_cast<Rboolean>(flag != 1);
         // call it
-        SEXP result =
-            f(call.ast, call.callee, argslist, materializeCallerEnv(call, ctx));
+        SEXP env = materializeCallerEnv(call, ctx);
+        BEGIN_TRACK_ENV(env);
+        SEXP result = f(call.ast, call.callee, argslist, env);
+        END_TRACK_ENV();
         if (flag < 2)
             R_Visible = static_cast<Rboolean>(flag != 1);
         return result;
@@ -777,6 +785,10 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
         addDynamicAssumptionsForOneTarget(call, fun->signature());
     call.givenAssumptions = derived;
 
+    // TODO: We might need to handle jumps
+    ReflectGuard prevReflectGuard = curReflectGuard;
+    curReflectGuard = fun->reflectGuard;
+
     bool needsEnv = fun->signature().envCreation ==
                     FunctionSignature::Environment::CallerProvided;
     SEXP result = nullptr;
@@ -859,6 +871,8 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
 
     if (bodyPreserved)
         UNPROTECT(1);
+
+    curReflectGuard = prevReflectGuard;
 
     assert(result);
 
@@ -1706,6 +1720,8 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
                !LazyEnvironment::check(e)->materialized());
         if (e != env)
             env = e;
+        // TODO: We never perform reflection ourselves, do we?
+        R_ExternalEnvStack->env = e;
     };
 
     // This is used in loads for recording if the loaded value was a promise

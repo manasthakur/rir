@@ -3,6 +3,7 @@
 
 #include "R/r.h"
 #include "instance.h"
+#include "reflect.h"
 
 namespace rir {
 
@@ -87,6 +88,7 @@ static void rirDefineVarWrapper(SEXP symbol, SEXP value, SEXP rho) {
                 UNPROTECT(1);
                 return;
             }
+            willAccessEnv(rho, EnvAccessType::Set);
             SETCAR(frame, value);
             SET_MISSING(frame, 0); /* Over-ride */
             return;
@@ -96,6 +98,7 @@ static void rirDefineVarWrapper(SEXP symbol, SEXP value, SEXP rho) {
 
     if (FRAME_IS_LOCKED(rho))
         Rf_error("cannot add bindings to a locked environment");
+    willAccessEnv(rho, EnvAccessType::Define);
     PROTECT(value);
     INCREMENT_NAMED(value);
     SET_FRAME(rho, Rf_cons(value, FRAME(rho)));
@@ -108,6 +111,7 @@ static RIR_INLINE SEXP getCellFromCache(SEXP env, Immediate poolIdx,
                                         InterpreterInstance* ctx,
                                         BindingCache* cache) {
     if (env != R_BaseEnv && env != R_BaseNamespace) {
+        willAccessEnv(env, EnvAccessType::Get);
         SEXP cell = cachedGetBindingCell(cacheIdx, cache);
         if (!cell) {
             SEXP sym = cp_pool_at(ctx, poolIdx);
@@ -154,6 +158,7 @@ static RIR_INLINE void cachedSetVar(SEXP val, SEXP env, Immediate poolIdx,
             ENSURE_NAMED(val);
             return;
         }
+        willAccessEnv(env, EnvAccessType::Set);
         INCREMENT_NAMED(val);
         SETCAR(loc, val);
         if (!keepMissing && MISSING(loc)) {
@@ -180,6 +185,7 @@ static inline void rirSetVarWrapper(SEXP sym, SEXP val, SEXP env) {
                 ENSURE_NAMED(val);
                 return;
             }
+            willAccessEnv(env, EnvAccessType::Set);
             INCREMENT_NAMED(val);
             SETCAR(loc.cell, val);
             SET_MISSING(loc.cell, 0);
