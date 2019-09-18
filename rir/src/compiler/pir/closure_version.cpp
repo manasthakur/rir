@@ -1,6 +1,7 @@
 #include "closure_version.h"
 #include "../transform/bb.h"
 #include "../util/visitor.h"
+#include "interpreter/reflect.h"
 #include "closure.h"
 #include "pir_impl.h"
 
@@ -8,6 +9,10 @@
 
 namespace rir {
 namespace pir {
+
+ReflectGuard ClosureVersion::reflectGuard() const {
+    return owner()->reflectGuard;
+}
 
 void ClosureVersion::print(std::ostream& out, bool tty) const {
     print(DebugStyle::Standard, out, tty, false);
@@ -32,7 +37,7 @@ void ClosureVersion::print(DebugStyle style, std::ostream& out, bool tty,
 
 void ClosureVersion::printStandard(std::ostream& out, bool tty,
                                    bool omitDeoptBranches) const {
-    out << *this << "\n";
+    out << *this << " reflect guard: " << reflectGuard() << "\n";
     printCode(out, tty, omitDeoptBranches);
     for (auto p : promises_) {
         if (p) {

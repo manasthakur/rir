@@ -69,6 +69,7 @@ class ClosureVersion : public Code {
     size_t nargs() const;
     const std::string& name() const { return name_; }
     const std::string& nameSuffix() const { return nameSuffix_; }
+    ReflectGuard reflectGuard() const;
 
     void print(std::ostream& out, bool tty) const;
     void print(DebugStyle style, std::ostream& out, bool tty,

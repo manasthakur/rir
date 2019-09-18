@@ -95,11 +95,11 @@ rir.disassemble(f)
 stopifnot(42 == f(evilFun))
 ##
 
-f <- function(f) {
+f <- function(g) {
   localVar <- "local"
   polymorphic <- data.frame()
   a <- 1
-  f1(f)
+  f1(g)
   polymorphic <- polymorphic + a
   localVar
 }
@@ -125,11 +125,11 @@ rir.disassemble(f)
 stopifnot(42 == f(evilFun))
 ## 
 
-f <- function(f) {
+f <- function(g) {
   localVar <- "local"
   polymorphic <- data.frame()
   a <- 1
-  f1(f)
+  f1(g)
   polymorphic <- polymorphic + a
   localVar
 }
@@ -155,11 +155,11 @@ rir.disassemble(f)
 stopifnot(42 == f(evilFun))
 ## 
 
-f <- function(f) {
+f <- function(g) {
   localVar <- "local"
   polymorphic <- data.frame()
   a <- 1
-  f1(f)
+  f1(g)
   polymorphic <- polymorphic + a
   localVar
 }

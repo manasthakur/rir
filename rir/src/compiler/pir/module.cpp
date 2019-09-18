@@ -13,10 +13,10 @@ void Module::print(std::ostream& out, bool tty) {
 
 Closure* Module::getOrDeclareRirFunction(const std::string& name,
                                          rir::Function* f, SEXP formals,
-                                         SEXP src) {
+                                         SEXP src, ReflectGuard reflectGuard) {
     auto env = Env::notClosed();
     if (!closures.count(Idx(f, env))) {
-        closures[Idx(f, env)] = new Closure(name, f, formals, src);
+        closures[Idx(f, env)] = new Closure(name, f, formals, src, reflectGuard);
     }
     return closures.at(Idx(f, env));
 }

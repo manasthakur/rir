@@ -51,11 +51,12 @@ void Rir2PirCompiler::compileClosure(SEXP closure, const std::string& name,
 void Rir2PirCompiler::compileFunction(rir::Function* srcFunction,
                                       const std::string& name, SEXP formals,
                                       SEXP srcRef,
+                                      ReflectGuard reflectGuard,
                                       const Assumptions& assumptions,
                                       MaybeCls success, Maybe fail) {
     OptimizationContext context(assumptions);
     auto closure =
-        module->getOrDeclareRirFunction(name, srcFunction, formals, srcRef);
+        module->getOrDeclareRirFunction(name, srcFunction, formals, srcRef, reflectGuard);
     compileClosure(closure, context, success, fail);
 }
 

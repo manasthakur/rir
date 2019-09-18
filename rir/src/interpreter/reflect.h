@@ -13,6 +13,8 @@ enum class EnvAccessType : unsigned {
     Get = 3,
 };
 
+bool canPerformReflection(ReflectGuard guard);
+
 void willAccessEnv(SEXP env, EnvAccessType typ);
 
 std::ostream& operator<<(std::ostream& buf, ReflectGuard guard);

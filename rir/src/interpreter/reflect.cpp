@@ -34,6 +34,10 @@ ReflectGuard pir::Parameter::RIR_REFLECT_GUARD =
                                       std::string(getenv("RIR_REFLECT_GUARD")))
                                 : ReflectGuard::None;
 
+bool canPerformReflection(ReflectGuard guard) {
+    return guard != ReflectGuard::Error && guard != ReflectGuard::Retry;
+}
+
 inline static SEXP currentEnv() {
     if (R_ExternalEnvStack == NULL)
         return R_BaseEnv;

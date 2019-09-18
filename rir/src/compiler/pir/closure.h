@@ -27,7 +27,7 @@ class Closure {
     friend class Module;
 
     Closure(const std::string& name, rir::Function* function, SEXP formals,
-            SEXP srcRef);
+            SEXP srcRef, ReflectGuard reflectGuard);
     Closure(const std::string& name, SEXP closure, rir::Function* function,
             Env* env);
 
@@ -43,6 +43,8 @@ class Closure {
     std::map<const OptimizationContext, ClosureVersion*> versions;
 
   public:
+    const ReflectGuard reflectGuard;
+
     SEXP rirClosure() const {
         assert(origin_ && "Inner function does not have a source rir closure");
         return origin_;

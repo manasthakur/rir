@@ -29,14 +29,14 @@ class Rir2PirCompiler : public RirCompiler {
     void compileClosure(SEXP, const std::string& name, const Assumptions& ctx,
                         MaybeCls success, Maybe fail);
     void compileFunction(rir::Function* f, const std::string& name,
-                         SEXP formals, SEXP srcRef, MaybeCls success,
+                         SEXP formals, SEXP srcRef, ReflectGuard reflectGuard, MaybeCls success,
                          Maybe fail) {
-        compileFunction(f, name, formals, srcRef, defaultAssumptions, success,
-                        fail);
+        compileFunction(f, name, formals, srcRef, reflectGuard, defaultAssumptions,
+                        success, fail);
     }
     void compileFunction(rir::Function*, const std::string& name, SEXP formals,
-                         SEXP srcRef, const Assumptions& ctx, MaybeCls success,
-                         Maybe fail);
+                         SEXP srcRef, ReflectGuard reflectGuard, const Assumptions& ctx,
+                         MaybeCls success, Maybe fail);
     void optimizeModule();
 
   private:

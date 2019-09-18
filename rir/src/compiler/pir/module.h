@@ -24,7 +24,7 @@ class Module {
     void print(std::ostream& out = std::cout, bool tty = false);
 
     Closure* getOrDeclareRirFunction(const std::string& name, rir::Function* f,
-                                     SEXP formals, SEXP src);
+                                     SEXP formals, SEXP src, ReflectGuard reflectGuard);
     Closure* getOrDeclareRirClosure(const std::string& name, SEXP closure,
                                     rir::Function* f);
 
