@@ -2,10 +2,9 @@
 
 #include "compiler/parameter.h"
 #include <R/r.h>
+#include <stdio.h>
 
 namespace rir {
-
-extern ReflectGuard curReflectGuard;
 
 enum class EnvAccessType : unsigned {
     Delete = 0,
@@ -15,5 +14,7 @@ enum class EnvAccessType : unsigned {
 };
 
 void willAccessEnv(SEXP env, EnvAccessType typ);
+
+std::ostream& operator<<(std::ostream& buf, ReflectGuard guard);
 
 } // namespace rir

@@ -321,6 +321,9 @@ static RIR_INLINE SEXP rirCallTrampoline(const CallContext& call, Function* fun,
 
     initClosureContext(call.ast, &cntxt, env, call.callerEnv, arglist,
                        call.callee);
+    R_GlobalContext->rirCallFun = fun;
+    R_GlobalContext->curReflectGuard =
+        std::max(R_GlobalContext->curReflectGuard, (unsigned)fun->reflectGuard);
     R_Srcref = getAttrib(call.callee, symbol::srcref);
 
     closureDebug(call.ast, call.callee, env, R_NilValue, &cntxt);
@@ -785,10 +788,6 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
         addDynamicAssumptionsForOneTarget(call, fun->signature());
     call.givenAssumptions = derived;
 
-    // TODO: We might need to handle jumps
-    ReflectGuard prevReflectGuard = curReflectGuard;
-    curReflectGuard = fun->reflectGuard;
-
     bool needsEnv = fun->signature().envCreation ==
                     FunctionSignature::Environment::CallerProvided;
     SEXP result = nullptr;
@@ -871,8 +870,6 @@ RIR_INLINE SEXP rirCall(CallContext& call, InterpreterInstance* ctx) {
 
     if (bodyPreserved)
         UNPROTECT(1);
-
-    curReflectGuard = prevReflectGuard;
 
     assert(result);
 

@@ -5,7 +5,13 @@
 
 namespace rir {
 
-enum class ReflectGuard : unsigned { None = 0, Warn = 1, Error = 2 };
+enum class ReflectGuard : unsigned {
+    None = 0,
+    Warn = 1,
+    Error = 2,
+    // Error + unmark all "retry" functions in the call stack
+    Retry = 3
+};
 
 namespace pir {
 

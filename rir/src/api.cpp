@@ -8,6 +8,7 @@
 #include "api.h"
 
 #include "R/Serialize.h"
+#include "compiler/native/lower.h"
 #include "compiler/parameter.h"
 #include "compiler/test/PirCheck.h"
 #include "compiler/test/PirTests.h"
@@ -15,6 +16,7 @@
 #include "compiler/translations/rir_2_pir/rir_2_pir.h"
 #include "compiler/translations/rir_2_pir/rir_2_pir_compiler.h"
 #include "interpreter/interp_incl.h"
+#include "interpreter/reflect.h"
 #include "ir/BC.h"
 #include "ir/Compiler.h"
 
@@ -55,11 +57,12 @@ REXPORT SEXP rir_disassemble(SEXP what, SEXP verbose) {
         Rf_error("Not a rir compiled code");
 
     std::cout << "* closure " << what << " (vtable " << t << ", env "
-              << CLOENV(what) << ")\n";
+              << CLOENV(what) << ", reflect guard " << t->reflectGuard << ")\n";
     for (size_t entry = 0; entry < t->size(); ++entry) {
         Function* f = t->get(entry);
         std::cout << "= vtable slot <" << entry << "> (" << f << ", invoked "
-                  << f->invocationCount() << ") =\n";
+                  << f->invocationCount() << ", reflect guard "
+                  << f->reflectGuard << ") =\n";
         std::cout << "# ";
         f->signature().print(std::cout);
         std::cout << "\n";

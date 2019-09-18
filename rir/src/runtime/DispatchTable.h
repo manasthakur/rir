@@ -19,6 +19,8 @@ typedef SEXP DispatchTableEntry;
 #pragma pack(1)
 struct DispatchTable
     : public RirRuntimeObject<DispatchTable, DISPATCH_TABLE_MAGIC> {
+    // Don't serialize this
+    ReflectGuard reflectGuard = pir::Parameter::RIR_REFLECT_GUARD;
 
     size_t size() const { return size_; }
 
@@ -33,6 +35,9 @@ struct DispatchTable
     void baseline(Function* f) {
         assert(f->signature().optimization ==
                FunctionSignature::OptimizationLevel::Baseline);
+        f->reflectGuard = (reflectGuard == ReflectGuard::Retry)
+                              ? ReflectGuard::None
+                              : reflectGuard;
         setEntry(0, f->container());
         if (size() == 0)
             size_++;
@@ -67,6 +72,7 @@ struct DispatchTable
         assert(size() > 0);
         assert(fun->signature().optimization !=
                FunctionSignature::OptimizationLevel::Baseline);
+        fun->reflectGuard = reflectGuard;
         auto assumptions = fun->signature().assumptions;
         size_t i = 1;
         for (; i < size(); ++i) {
@@ -141,6 +147,7 @@ struct DispatchTable
         AddReadRef(refTable, table->container());
         table->size_ = InInteger(inp);
         for (size_t i = 0; i < table->size(); i++) {
+            // Make sure not to override the function's reflectGuard
             table->setEntry(i,
                             Function::deserialize(refTable, inp)->container());
         }
