@@ -3,6 +3,7 @@
 #include "runtime/DispatchTable.h"
 #include "runtime/Function.h"
 #include "utils/Pool.h"
+#include "utils/Terminal.h"
 #include "utils/capture_out.h"
 #include <R/Symbols.h>
 #include <iostream>
@@ -63,6 +64,8 @@ inline static bool canEnvAccess(SEXP x, SEXP target) {
     return false;
 }
 
+extern "C" Rboolean R_Visible;
+
 // Mark the topmost RIR function non-reflective, and remove all RIR functions in
 // the call stack from their dispatch table. Also jumps out of these functions'
 // execution
@@ -70,7 +73,7 @@ static void taintCallStack() {
     bool taintedTopmost = false;
     RCNTXT* prevRctx;
     RCNTXT* rctx;
-    for (prevRctx = NULL, rctx = R_GlobalContext;
+    for (prevRctx = R_GlobalContext, rctx = R_GlobalContext;
          rctx->callflag != CTXT_TOPLEVEL;
          prevRctx = rctx, rctx = rctx->nextcontext) {
         if (Function* fun = (Function*)rctx->rirCallFun) {
@@ -82,17 +85,30 @@ static void taintCallStack() {
             table->remove(fun->body());
             if (!taintedTopmost) {
                 if (table->reflectGuard == ReflectGuard::Retry) {
+                    std::cout << "*";
                     table->reflectGuard = ReflectGuard::None;
+                    for (size_t i = 1; i < table->size(); i++) {
+                        Function* ofun = table->get(i);
+                        if (ofun != fun &&
+                            ofun->reflectGuard == ReflectGuard::Retry) {
+                            Pool::insert(ofun->container());
+                            table->remove(ofun->body());
+                            i--; // since table's size decreased
+                        }
+                    }
                 }
                 if (fun->reflectGuard == ReflectGuard::Retry) {
+                    std::cout << "+";
                     taintedTopmost = true;
                 }
             }
+            std::cout << "- ";
+            Rf_PrintValue(rctx->call);
         }
     }
+    std::cout << "=====\n";
     assert(taintedTopmost);
-    if (prevRctx != NULL)
-        R_jumpctxt(prevRctx, 0, R_MissingArg);
+    R_jumpctxt(prevRctx, 0, R_RestartToken);
 }
 
 void willPerformReflection(SEXP env, EnvAccessType typ) {
@@ -106,8 +122,14 @@ void willPerformReflection(SEXP env, EnvAccessType typ) {
         Rf_error("closure tried to perform reflection (type %d)", typ);
         break;
     case ReflectGuard::Retry:
-        std::cerr << "RIR assertion failure: closure tried to perform "
-                     "reflection, marked reflective for next time\n";
+        if (ConsoleColor::isTTY(std::cerr)) {
+            ConsoleColor::yellow(std::cerr);
+        }
+        std::cerr
+            << "Unmarked closure tried to perform reflection. RIR stack:\n";
+        if (ConsoleColor::isTTY(std::cerr)) {
+            ConsoleColor::clear(std::cerr);
+        }
         taintCallStack();
         break;
     default:

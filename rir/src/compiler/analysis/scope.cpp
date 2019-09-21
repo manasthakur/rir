@@ -1,6 +1,7 @@
 #include "scope.h"
 #include "../pir/pir_impl.h"
 #include "../util/safe_builtins_list.h"
+#include "interpreter/reflect.h"
 #include "query.h"
 
 namespace rir {
@@ -129,6 +130,36 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
         }
     };
 
+    auto taintIfAccessible = [&](Instruction* i, AbstractREnvironment& env) {
+        // We don't need to taint if the promise/call can't access this
+        // environment, which we know if:
+        // 1. We have an introspection guard
+        // 2. We don't leak any side-effecting promises with access to the
+        // environment.
+        //    TODO: Broaden past instruction args
+        // 3. The environment is local (but currently all tracked abstract
+        // environments are) Currently all tracked abstract environments are
+        // local
+        if (!canPerformReflection(closure->reflectGuard())) {
+            if (auto call = CallInstruction::CastCall(i)) {
+                bool ok = true;
+                call->eachCallArg([&](Value* arg) {
+                    if (auto mk = MkArg::Cast(arg)) {
+                        if (!mk->noReflection) {
+                            ok = false;
+                        }
+                    }
+                });
+                if (ok)
+                    return;
+            } else {
+                return;
+            }
+        }
+
+        env.taint();
+    };
+
     if (auto ret = Return::Cast(i)) {
         // We keep track of the result of function returns.
         auto res = ret->arg<0>().val();
@@ -179,7 +210,7 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
             // ldfun, then we can at least contain the tainted environments.
             auto& env = state.envs.at(ld.env);
             env.leaked = true;
-            env.taint();
+            taintIfAccessible(ldfun, env);
             effect.taint();
             handled = true;
         }
@@ -254,11 +285,19 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
                 lookup(arg->followCastsAndForce(), doLookup);
         }
 
-        if (!handled && LdArg::Cast(arg) &&
-            closure->assumptions().includes(Assumption::NoReflectiveArgument)) {
-            // Forcing an argument can only affect local envs by reflection.
-            // Otherwise only leaked envs can be affected
-            effect.max(state.envs.taintLeaked());
+        if (!handled && LdArg::Cast(arg)) {
+            if (!canPerformReflection(closure->reflectGuard())) {
+                // Accessing local envs or leaked envs will break the reflect
+                // guard
+                effect.update();
+            } else if (closure->assumptions().includes(
+                           Assumption::NoReflectiveArgument)) {
+                // Forcing an argument can only affect local envs by reflection.
+                // Otherwise only leaked envs can be affected
+                effect.max(state.envs.taintLeaked());
+            } else {
+                effect.taint();
+            }
             updateReturnValue(AbstractPirValue::tainted());
             handled = true;
         }
@@ -347,25 +386,29 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
             assert((CallBuiltin::Cast(i) || CallSafeBuiltin::Cast(i) ||
                     NamedCall::Cast(i)) &&
                    "New call instruction not handled?");
-            auto safe = false;
-            if (auto builtin = CallBuiltin::Cast(i)) {
-                if (SafeBuiltinsList::nonObject(builtin->blt)) {
-                    safe = true;
-                    builtin->eachCallArg([&](Value* arg) {
-                        lookup(
-                            arg->followCasts(),
-                            [&](const AbstractPirValue& analysisRes) {
-                                if (analysisRes.type.maybeObj())
-                                    safe = false;
-                            },
-                            [&]() {
-                                if (arg->type.maybeObj())
-                                    safe = false;
-                            });
-                    });
+            auto safe = canPerformReflection(closure->reflectGuard());
+            if (!safe && CallSafeBuiltin::Cast(i))
+                safe = true;
+            if (!safe) {
+                if (auto builtin = CallBuiltin::Cast(i)) {
+                    if (SafeBuiltinsList::nonObject(builtin->blt)) {
+                        safe = true;
+                        builtin->eachCallArg([&](Value* arg) {
+                            lookup(
+                                arg->followCasts(),
+                                [&](const AbstractPirValue& analysisRes) {
+                                    if (analysisRes.type.maybeObj())
+                                        safe = false;
+                                },
+                                [&]() {
+                                    if (arg->type.maybeObj())
+                                        safe = false;
+                                });
+                        });
+                    }
                 }
             }
-            if (CallSafeBuiltin::Cast(i) || safe) {
+            if (safe) {
                 handled = true;
             } else {
                 if (!CallBuiltin::Cast(i) ||
@@ -419,7 +462,7 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
             // need to consider it tainted.
             if (envIsNeeded && i->changesEnv()) {
                 state.envs.taintLeaked();
-                state.envs.at(i->env()).taint();
+                taintIfAccessible(i, state.envs.at(i->env()));
                 effect.taint();
             }
         }

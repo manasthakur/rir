@@ -7,6 +7,7 @@
 #include "../util/safe_builtins_list.h"
 #include "../util/visitor.h"
 #include "R/r.h"
+#include "interpreter/reflect.h"
 #include "pass_definitions.h"
 #include "utils/Set.h"
 
@@ -259,7 +260,8 @@ class TheScopeResolution {
                 // If no reflective argument is passed to us, then forcing an
                 // argument cannot see our environment
                 if (function->assumptions().includes(
-                        rir::Assumption::NoReflectiveArgument)) {
+                        rir::Assumption::NoReflectiveArgument) ||
+                    !canPerformReflection(function->reflectGuard())) {
                     if (auto force = Force::Cast(i)) {
                         if (force->hasEnv()) {
                             auto arg =
