@@ -1437,7 +1437,9 @@ bool isMissing(SEXP symbol, SEXP environment, Code* code, Opcode* pc) {
     val = findRootPromise(val);
     if (!isSymbol(PREXPR(val)))
         return false;
-    else {
+    else if (PRVALUE(val) != R_UnboundValue) {
+        return MISSING(PRVALUE(val));
+    } else {
         return R_isMissing(PREXPR(val), PRENV(val));
     }
 }
