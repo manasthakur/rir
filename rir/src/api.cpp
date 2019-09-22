@@ -410,6 +410,28 @@ REXPORT SEXP rirDisableLoopPeeling() {
     return R_NilValue;
 }
 
+REXPORT SEXP rirEnableFreeze() {
+    RCNTXT* freezeFunCtx = R_GlobalContext;
+    while (strcmp(CHAR(PRINTNAME(CAR(freezeFunCtx->call))), "rir.freeze") !=
+           0) {
+        assert(freezeFunCtx->nextcontext != NULL);
+        freezeFunCtx = freezeFunCtx->nextcontext;
+    }
+    // If we retry, isFreezeFunCtx will already be true and this is ok
+    if (freezeEnabled && !freezeFunCtx->isFreezeFunCtx) {
+        Rf_error("freeze mode already enabled, can't nest");
+    }
+    freezeEnabled = true;
+    freezeFunCtx->isFreezeFunCtx = true;
+    return R_NilValue;
+}
+
+REXPORT SEXP rirDisableFreeze() {
+    assert(freezeEnabled);
+    freezeEnabled = false;
+    return R_NilValue;
+}
+
 bool startup() {
     initializeRuntime();
     return true;

@@ -5,7 +5,7 @@
 #include "FunctionSignature.h"
 #include "R/r.h"
 #include "RirRuntimeObject.h"
-#include "compiler/parameter.h"
+#include "ir/ReflectGuard.h"
 
 namespace rir {
 

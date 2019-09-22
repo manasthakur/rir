@@ -140,7 +140,7 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
         // 3. The environment is local (but currently all tracked abstract
         // environments are) Currently all tracked abstract environments are
         // local
-        if (!canPerformReflection(closure->reflectGuard())) {
+        if (!canIntrospect(closure->reflectGuard())) {
             if (auto call = CallInstruction::CastCall(i)) {
                 bool ok = true;
                 call->eachCallArg([&](Value* arg) {
@@ -286,7 +286,7 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
         }
 
         if (!handled && LdArg::Cast(arg)) {
-            if (!canPerformReflection(closure->reflectGuard())) {
+            if (!canIntrospect(closure->reflectGuard())) {
                 // Accessing local envs or leaked envs will break the reflect
                 // guard
                 effect.update();
@@ -386,7 +386,7 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
             assert((CallBuiltin::Cast(i) || CallSafeBuiltin::Cast(i) ||
                     NamedCall::Cast(i)) &&
                    "New call instruction not handled?");
-            auto safe = canPerformReflection(closure->reflectGuard());
+            auto safe = canIntrospect(closure->reflectGuard());
             if (!safe && CallSafeBuiltin::Cast(i))
                 safe = true;
             if (!safe) {

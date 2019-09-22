@@ -26,5 +26,7 @@ extern SEXP rirOptDefaultOptsDryrun(SEXP closure, const rir::Assumptions&,
                                     SEXP name);
 REXPORT SEXP rir_serialize(SEXP data, SEXP file);
 REXPORT SEXP rir_deserialize(SEXP file);
+REXPORT SEXP rirEnableFreeze();
+REXPORT SEXP rirDisableFreeze();
 
 #endif // API_H_

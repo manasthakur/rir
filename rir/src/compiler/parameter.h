@@ -5,14 +5,6 @@
 
 namespace rir {
 
-enum class ReflectGuard : unsigned {
-    None = 0,
-    Warn = 1,
-    Error = 2,
-    // Error + unmark all "retry" functions in the call stack
-    Retry = 3
-};
-
 namespace pir {
 
 struct Parameter {
@@ -32,7 +24,6 @@ struct Parameter {
     static unsigned RIR_SERIALIZE_CHAOS;
 
     static unsigned RIR_CHECK_PIR_TYPES;
-    static ReflectGuard RIR_REFLECT_GUARD;
 };
 } // namespace pir
 } // namespace rir

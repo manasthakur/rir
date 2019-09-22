@@ -1,8 +1,9 @@
 #ifndef PIR_PIR_H
 #define PIR_PIR_H
 
-#include <stdint.h>
+#include "ir/ReflectGuard.h"
 #include "type.h"
+#include <stdint.h>
 // Forward declaration of PIR types. Use for headers.
 
 namespace rir {

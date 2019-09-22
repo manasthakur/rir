@@ -319,6 +319,7 @@ static RIR_INLINE SEXP rirCallTrampoline(const CallContext& call, Function* fun,
     // could get overwritten while we are executing it.
     PROTECT(fun->container());
 
+    BEGIN_TRACK_ENV(env);
     initClosureContext(call.ast, &cntxt, env, call.callerEnv, arglist,
                        call.callee);
     R_GlobalContext->rirCallFun = fun;
@@ -334,13 +335,12 @@ static RIR_INLINE SEXP rirCallTrampoline(const CallContext& call, Function* fun,
     Code* code = fun->body();
     // Pass &cntxt.cloenv, to let evalRirCode update the env of the current
     // context
-    BEGIN_TRACK_ENV(env);
     SEXP result = rirCallTrampoline_(cntxt, call, code, env, ctx);
-    END_TRACK_ENV();
     PROTECT(result);
 
     endClosureDebug(call.ast, call.callee, env);
     endClosureContext(&cntxt, result);
+    END_TRACK_ENV();
 
     R_Srcref = cntxt.srcref;
     R_ReturnedValue = R_NilValue;
@@ -423,6 +423,7 @@ static SEXP inlineContextTrampoline(Code* c, const CallContext* callCtx,
     // callee. We store sysparent there, because our optimizer may actually
     // delay instructions into the inlinee and might assume that we still have
     // to outer env.
+    BEGIN_TRACK_ENV(symbol::delayedEnv);
     initClosureContext(ast, &cntxt, symbol::delayedEnv, sysparent,
                        symbol::delayedArglist, op);
     auto trampoline = [&]() {
@@ -447,10 +448,9 @@ static SEXP inlineContextTrampoline(Code* c, const CallContext* callCtx,
     };
 
     // execute the inlined function
-    BEGIN_TRACK_ENV(symbol::delayedEnv);
     auto res = trampoline();
-    END_TRACK_ENV();
     endClosureContext(&cntxt, res);
+    END_TRACK_ENV();
     return res;
 }
 

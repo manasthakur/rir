@@ -8,36 +8,12 @@
 #include <R/Symbols.h>
 #include <iostream>
 
-// #define DEBUG_REFLECT
-
 extern "C" SEXP R_ReplaceFunsTable;
+extern "C" RPRSTACK* R_PendingPromises;
 
 namespace rir {
 
-static ReflectGuard parseReflectGuard(std::string guard) {
-    if (guard == "off") {
-        return ReflectGuard::None;
-    } else if (guard == "warn") {
-        return ReflectGuard::Warn;
-    } else if (guard == "error") {
-        return ReflectGuard::Error;
-    } else if (guard == "retry") {
-        return ReflectGuard::Retry;
-    } else {
-        Rf_error("Invalid RIR_REFLECT_GUARD: %s. Valid options are: off, warn, "
-                 "error, retry",
-                 guard.c_str());
-    }
-}
-
-ReflectGuard pir::Parameter::RIR_REFLECT_GUARD =
-    getenv("RIR_REFLECT_GUARD") ? (ReflectGuard)parseReflectGuard(
-                                      std::string(getenv("RIR_REFLECT_GUARD")))
-                                : ReflectGuard::None;
-
-bool canPerformReflection(ReflectGuard guard) {
-    return guard != ReflectGuard::Error && guard != ReflectGuard::Retry;
-}
+bool freezeEnabled = false;
 
 inline static SEXP currentEnv() {
     if (R_ExternalEnvStack == NULL)
@@ -69,13 +45,21 @@ extern "C" Rboolean R_Visible;
 // Mark the topmost RIR function non-reflective, and remove all RIR functions in
 // the call stack from their dispatch table. Also jumps out of these functions'
 // execution
-static void taintCallStack() {
+static void taintCallStack(ReflectGuard guard) {
+    if (ConsoleColor::isTTY(std::cout)) {
+        ConsoleColor::yellow(std::cout);
+    }
+    std::cout
+        << "Unmarked closure tried to perform introspection. RIR stack:\n";
+    if (ConsoleColor::isTTY(std::cout)) {
+        ConsoleColor::clear(std::cout);
+    }
+
     bool taintedTopmost = false;
-    RCNTXT* prevRctx;
     RCNTXT* rctx;
-    for (prevRctx = R_GlobalContext, rctx = R_GlobalContext;
-         rctx->callflag != CTXT_TOPLEVEL;
-         prevRctx = rctx, rctx = rctx->nextcontext) {
+    for (rctx = R_GlobalContext;
+         !rctx->isFreezeFunCtx && rctx->callflag != CTXT_TOPLEVEL;
+         rctx = rctx->nextcontext) {
         if (Function* fun = (Function*)rctx->rirCallFun) {
             DispatchTable* table = DispatchTable::unpack(BODY(rctx->callfun));
             // TODO: this version is still reachable from static call inline
@@ -84,20 +68,19 @@ static void taintCallStack() {
             Pool::insert(fun->container());
             table->remove(fun->body());
             if (!taintedTopmost) {
-                if (table->reflectGuard == ReflectGuard::Retry) {
+                if (table->reflectGuard >= guard) {
                     std::cout << "*";
                     table->reflectGuard = ReflectGuard::None;
                     for (size_t i = 1; i < table->size(); i++) {
                         Function* ofun = table->get(i);
-                        if (ofun != fun &&
-                            ofun->reflectGuard == ReflectGuard::Retry) {
+                        if (ofun != fun && ofun->reflectGuard >= guard) {
                             Pool::insert(ofun->container());
                             table->remove(ofun->body());
                             i--; // since table's size decreased
                         }
                     }
                 }
-                if (fun->reflectGuard == ReflectGuard::Retry) {
+                if (fun->reflectGuard >= guard) {
                     std::cout << "+";
                     taintedTopmost = true;
                 }
@@ -108,29 +91,22 @@ static void taintCallStack() {
     }
     std::cout << "=====\n";
     assert(taintedTopmost);
-    R_jumpctxt(prevRctx, 0, R_RestartToken);
+    // Don't signal pending promise warnings
+    while (R_PendingPromises != rctx->prstack) {
+        SET_PRSEEN(R_PendingPromises->promise, 0);
+        R_PendingPromises = R_PendingPromises->next;
+    }
+    R_jumpctxt(rctx, 0, R_RestartToken);
 }
 
 void willPerformReflection(SEXP env, EnvAccessType typ) {
     switch (curReflectGuard()) {
     case ReflectGuard::None:
         break;
-    case ReflectGuard::Warn:
-        Rf_warning("closure tried to perform reflection (type %d)", typ);
-        break;
-    case ReflectGuard::Error:
-        Rf_error("closure tried to perform reflection (type %d)", typ);
-        break;
-    case ReflectGuard::Retry:
-        if (ConsoleColor::isTTY(std::cerr)) {
-            ConsoleColor::yellow(std::cerr);
-        }
-        std::cerr
-            << "Unmarked closure tried to perform reflection. RIR stack:\n";
-        if (ConsoleColor::isTTY(std::cerr)) {
-            ConsoleColor::clear(std::cerr);
-        }
-        taintCallStack();
+    case ReflectGuard::Introspect:
+        if (typ == EnvAccessType::Get) // Only blocks introspection
+            break;
+        taintCallStack(ReflectGuard::Introspect);
         break;
     default:
         assert(false);
@@ -139,33 +115,10 @@ void willPerformReflection(SEXP env, EnvAccessType typ) {
 }
 
 void willAccessEnv(SEXP env, EnvAccessType typ) {
-    if (typ == EnvAccessType::Get)
-        return;
     // Fastcase no-guard
     if (curReflectGuard() != ReflectGuard::None &&
         !canEnvAccess(currentEnv(), env))
         willPerformReflection(env, typ);
-}
-
-std::ostream& operator<<(std::ostream& buf, ReflectGuard guard) {
-    switch (guard) {
-    case ReflectGuard::None:
-        buf << "none";
-        break;
-    case ReflectGuard::Warn:
-        buf << "warn";
-        break;
-    case ReflectGuard::Error:
-        buf << "error";
-        break;
-    case ReflectGuard::Retry:
-        buf << "retry";
-        break;
-    default:
-        assert(false);
-        break;
-    }
-    return buf;
 }
 
 } // namespace rir

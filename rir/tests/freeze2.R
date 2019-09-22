@@ -1,0 +1,8 @@
+require("Matrix")
+print(cS. <- contr.SAS(5, sparse = TRUE))
+x1 <- x2 <- c('a','b','a','b','c')
+print(xtabs(~ x1 + x2, sparse= TRUE, exclude = 'c'))
+rir.freeze({
+  M <- Matrix(diag(1:10), sparse=TRUE)
+  as.matrix(pmax(M, 7))
+})

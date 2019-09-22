@@ -1,10 +1,15 @@
+/**
+ * reflect.h - Reflection tracking
+ */
+
 #pragma once
 
-#include "compiler/parameter.h"
+#include "ir/ReflectGuard.h"
 #include <R/r.h>
-#include <stdio.h>
 
 namespace rir {
+
+extern bool freezeEnabled;
 
 enum class EnvAccessType : unsigned {
     Delete = 0,
@@ -13,10 +18,6 @@ enum class EnvAccessType : unsigned {
     Get = 3,
 };
 
-bool canPerformReflection(ReflectGuard guard);
-
 void willAccessEnv(SEXP env, EnvAccessType typ);
-
-std::ostream& operator<<(std::ostream& buf, ReflectGuard guard);
 
 } // namespace rir

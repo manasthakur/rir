@@ -261,7 +261,7 @@ class TheScopeResolution {
                 // argument cannot see our environment
                 if (function->assumptions().includes(
                         rir::Assumption::NoReflectiveArgument) ||
-                    !canPerformReflection(function->reflectGuard())) {
+                    !canIntrospect(function->reflectGuard())) {
                     if (auto force = Force::Cast(i)) {
                         if (force->hasEnv()) {
                             auto arg =

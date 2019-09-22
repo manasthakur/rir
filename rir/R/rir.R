@@ -114,13 +114,20 @@ pir.setDebugFlags <- function(debugFlags = pir.debugFlags()) {
     invisible(.Call("pir_setDebugFlags", debugFlags))
 }
 
-# compiles code of the given file and returns the list of compiled version.
-pir.program <- function(file) {
-  contents <- readChar(file, file.info(file)$size)
-  expr <- eval(parse(text = paste("function() {", contents, "}", sep = "\n")))
-  rir.compile(expr)
-  for (i in 1:as.numeric(Sys.getenv("PIR_WARMUP", unset="3")))
-    expr()
+# Runs the given code block repeatedly, compiling all functions in a special way to support limited traces.
+# - Initially, all PIR-compiled functions will assert no introspection during their execution.
+# - If introspection occurs in one of these functions, the closure will be "marked", so that it no longer asserts introspection,
+#   all functions in the call stack will be decompiled, and the code block will restart.
+# - Eventually, all closures which perform reflection will be marked, so that the code block runs to completion.
+# Any unmarked functions compiled in this code block will continue to assert introspection and therefore only support limited traces.
+# If introspection occurs in one of these functions, RIR will signal an error message and abort.
+rir.freeze <- function(code) {
+    # The loop is necessary for how rir.freeze restarts execution
+    for (i in 1:1) {
+        .Call("rirEnableFreeze")
+        on.exit(.Call("rirDisableFreeze"))
+        code
+    }
 }
 
 rir.eval <- function(what, env = globalenv()) {

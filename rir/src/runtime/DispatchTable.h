@@ -4,6 +4,7 @@
 #include "Function.h"
 #include "R/Serialize.h"
 #include "RirRuntimeObject.h"
+#include "ir/ReflectGuard.h"
 
 namespace rir {
 
@@ -20,7 +21,7 @@ typedef SEXP DispatchTableEntry;
 struct DispatchTable
     : public RirRuntimeObject<DispatchTable, DISPATCH_TABLE_MAGIC> {
     // Don't serialize this
-    ReflectGuard reflectGuard = pir::Parameter::RIR_REFLECT_GUARD;
+    ReflectGuard reflectGuard;
 
     size_t size() const { return size_; }
 
@@ -35,9 +36,7 @@ struct DispatchTable
     void baseline(Function* f) {
         assert(f->signature().optimization ==
                FunctionSignature::OptimizationLevel::Baseline);
-        f->reflectGuard = (reflectGuard == ReflectGuard::Retry)
-                              ? ReflectGuard::None
-                              : reflectGuard;
+        f->reflectGuard = ReflectGuard::None;
         setEntry(0, f->container());
         if (size() == 0)
             size_++;
@@ -170,7 +169,8 @@ struct DispatchTable
               // GC area starts at the end of the DispatchTable
               sizeof(DispatchTable),
               // GC area is just the pointers in the entry array
-              cap) {}
+              cap),
+          reflectGuard(newReflectGuard()) {}
 
     size_t size_ = 0;
 };
