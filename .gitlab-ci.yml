@@ -165,8 +165,6 @@ test_big_inline:
   except:
     - schedules
   retry: 1
-  only:
-    - master
   script:
     - cd /opt/rir/build/release
     - PIR_INLINER_MAX_INLINEE_SIZE=2000 ./bin/tests
