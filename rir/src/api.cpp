@@ -8,7 +8,7 @@
 #include "api.h"
 
 #include "R/Serialize.h"
-#include "compiler/native/lower.h"
+#include "compiler/native/lower_llvm.h"
 #include "compiler/parameter.h"
 #include "compiler/test/PirCheck.h"
 #include "compiler/test/PirTests.h"
