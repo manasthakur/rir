@@ -57,13 +57,13 @@ extern "C" Rboolean R_Visible;
 // the call stack from their dispatch table. Also jumps out of these functions'
 // execution
 static void taintCallStack(ReflectGuard guard) {
-    if (ConsoleColor::isTTY(std::cout)) {
-        ConsoleColor::yellow(std::cout);
+    if (ConsoleColor::isTTY(std::cerr)) {
+        ConsoleColor::yellow(std::cerr);
     }
-    std::cout
+    std::cerr
         << "Unmarked closure tried to perform introspection. RIR stack:\n";
-    if (ConsoleColor::isTTY(std::cout)) {
-        ConsoleColor::clear(std::cout);
+    if (ConsoleColor::isTTY(std::cerr)) {
+        ConsoleColor::clear(std::cerr);
     }
 
     bool taintedTopmost = false;
@@ -80,7 +80,7 @@ static void taintCallStack(ReflectGuard guard) {
             table->remove(fun->body());
             if (!taintedTopmost) {
                 if (table->reflectGuard >= guard) {
-                    std::cout << "*";
+                    std::cerr << "*";
                     table->reflectGuard = ReflectGuard::None;
                     for (size_t i = 1; i < table->size(); i++) {
                         Function* ofun = table->get(i);
@@ -92,15 +92,15 @@ static void taintCallStack(ReflectGuard guard) {
                     }
                 }
                 if (fun->reflectGuard >= guard) {
-                    std::cout << "+";
+                    std::cerr << "+";
                     taintedTopmost = true;
                 }
             }
-            std::cout << "- ";
+            std::cerr << "- ";
             Rf_PrintValue(rctx->call);
         }
     }
-    std::cout << "=====\n";
+    std::cerr << "=====\n";
     assert(taintedTopmost);
     // Don't signal pending promise warnings
     while (R_PendingPromises != rctx->prstack) {
