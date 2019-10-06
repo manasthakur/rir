@@ -290,16 +290,15 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
                 // Accessing local envs or leaked envs will break the reflect
                 // guard
                 effect.update();
+                handled = true;
             } else if (closure->assumptions().includes(
                            Assumption::NoReflectiveArgument)) {
                 // Forcing an argument can only affect local envs by reflection.
                 // Otherwise only leaked envs can be affected
                 effect.max(state.envs.taintLeaked());
-            } else {
-                effect.taint();
+                handled = true;
             }
             updateReturnValue(AbstractPirValue::tainted());
-            handled = true;
         }
 
         if (!handled && depth < MAX_DEPTH && force->strict) {
@@ -386,7 +385,7 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
             assert((CallBuiltin::Cast(i) || CallSafeBuiltin::Cast(i) ||
                     NamedCall::Cast(i)) &&
                    "New call instruction not handled?");
-            auto safe = canIntrospect(closure->reflectGuard());
+            auto safe = !canIntrospect(closure->reflectGuard());
             if (!safe && CallSafeBuiltin::Cast(i))
                 safe = true;
             if (!safe) {
