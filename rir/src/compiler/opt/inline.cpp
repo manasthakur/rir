@@ -106,7 +106,8 @@ class TheInliner {
                         if (LdFun::Cast(i) || LdVar::Cast(i)) {
                             auto n = LdFun::Cast(i) ? LdFun::Cast(i)->varName
                                                     : LdVar::Cast(i)->varName;
-                            if (!SafeBuiltinsList::forInlineByName(n)) {
+                            if (!SafeBuiltinsList::forInlineByName(n) ||
+                                n == rir::symbol::preventRirInline) {
                                 allowInline = SafeToInline::No;
                                 return false;
                             }

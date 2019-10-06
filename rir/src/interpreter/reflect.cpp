@@ -1,4 +1,5 @@
 #include "reflect.h"
+#include "LazyEnvironment.h"
 #include "compiler/parameter.h"
 #include "runtime/DispatchTable.h"
 #include "runtime/Function.h"
@@ -30,12 +31,22 @@ inline static bool canEnvAccess(SEXP x, SEXP target) {
     SLOWASSERT(TYPEOF(target) == ENVSXP);
     if (x == R_BaseEnv || x == R_BaseNamespace || target == R_ReplaceFunsTable)
         return true;
-    for (SEXP cur = x; cur != R_EmptyEnv; cur = ENCLOS(cur)) {
-        if (cur == symbol::delayedEnv)
+    for (SEXP cur = x; cur != R_EmptyEnv; /* increment in body */) {
+        if (cur == symbol::delayedEnv) // TODO: Use most lexical non-elieded env
+                                       // (probably cloenv)
             cur = R_GlobalEnv;
-        SLOWASSERT(TYPEOF(cur) == ENVSXP);
         if (cur == target)
             return true;
+        if (auto lcur = LazyEnvironment::check(cur)) {
+            if (lcur->materialized()) {
+                cur = lcur->materialized();
+            } else {
+                cur = lcur->getParent();
+            }
+        } else {
+            SLOWASSERT(TYPEOF(cur) == ENVSXP);
+            cur = ENCLOS(cur);
+        }
     }
     return false;
 }

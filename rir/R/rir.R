@@ -123,6 +123,7 @@ pir.setDebugFlags <- function(debugFlags = pir.debugFlags()) {
 # If introspection occurs in one of these functions, RIR will signal an error message and abort.
 rir.freeze <- function(code) {
     # The loop is necessary for how rir.freeze restarts execution
+    .preventRirInline()
     for (i in 1:1) {
         .Call("rirEnableFreeze")
         on.exit(.Call("rirDisableFreeze"))
@@ -151,6 +152,10 @@ rir.body <- function(f) {
 # note: the actual body of this function is replaced by an "int3_" bytecode
 .int3 <- function() {
     stop("missed breakpoint, did you re-compile RIR?")
+}
+
+.preventRirInline <- function() {
+    # stub used to prevent RIR from inlining
 }
 
 # Serializes the SEXP, preserving RIR/PIR-compiled closures, to the given path

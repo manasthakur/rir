@@ -79,6 +79,7 @@
     V(sysframe, "sys.frame")                                                   \
     V(syscall, "sys.call")                                                     \
     V(srcref, "srcref")                                                        \
+    V(preventRirInline, ".preventRirInline")                                   \
     V(ambiguousCallTarget, ".ambiguousCallTarget.")                            \
     V(delayedArglist, ".delayedArglist.")                                      \
     V(delayedEnv, ".delayedEnv.")                                              \
