@@ -51,7 +51,7 @@ struct Function : public RirRuntimeObject<Function, FUNCTION_MAGIC> {
               NUM_PTRS + defaultArgs.size()),
           size(functionSize), deopt(false), markOpt(false),
           unoptimizable(false), uninlinable(false), dead(false),
-          innerFunction(false), reflectGuard(ReflectGuard::None),
+          innerFunction(false), reflectGuard((unsigned)ReflectGuard::None),
           numArgs(defaultArgs.size()), signature_(signature) {
         for (size_t i = 0; i < numArgs; ++i)
             setEntry(NUM_PTRS + i, defaultArgs[i]);
@@ -86,7 +86,7 @@ struct Function : public RirRuntimeObject<Function, FUNCTION_MAGIC> {
     unsigned dead : 1;
     unsigned innerFunction : 1;
     // Note: This is overridden by the DispatchTable on insert
-    ReflectGuard reflectGuard : 2;
+    unsigned reflectGuard : 2;
 
     unsigned numArgs;
 

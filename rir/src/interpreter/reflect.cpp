@@ -84,14 +84,15 @@ static void taintCallStack(ReflectGuard guard) {
                     table->reflectGuard = ReflectGuard::None;
                     for (size_t i = 1; i < table->size(); i++) {
                         Function* ofun = table->get(i);
-                        if (ofun != fun && ofun->reflectGuard >= guard) {
+                        if (ofun != fun &&
+                            (ReflectGuard)ofun->reflectGuard >= guard) {
                             Pool::insert(ofun->container());
                             table->remove(ofun->body());
                             i--; // since table's size decreased
                         }
                     }
                 }
-                if (fun->reflectGuard >= guard) {
+                if ((ReflectGuard)fun->reflectGuard >= guard) {
                     std::cerr << "+";
                     taintedTopmost = true;
                 }

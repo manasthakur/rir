@@ -36,7 +36,7 @@ struct DispatchTable
     void baseline(Function* f) {
         assert(f->signature().optimization ==
                FunctionSignature::OptimizationLevel::Baseline);
-        f->reflectGuard = ReflectGuard::None;
+        f->reflectGuard = (unsigned)ReflectGuard::None;
         setEntry(0, f->container());
         if (size() == 0)
             size_++;
@@ -71,7 +71,7 @@ struct DispatchTable
         assert(size() > 0);
         assert(fun->signature().optimization !=
                FunctionSignature::OptimizationLevel::Baseline);
-        fun->reflectGuard = reflectGuard;
+        fun->reflectGuard = (unsigned)reflectGuard;
         auto assumptions = fun->signature().assumptions;
         size_t i = 1;
         for (; i < size(); ++i) {

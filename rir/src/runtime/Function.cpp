@@ -34,7 +34,7 @@ Function* Function::deserialize(SEXP refTable, R_inpstream_t inp) {
     fun->unoptimizable = InChar(inp);
     fun->uninlinable = InChar(inp);
     fun->dead = InChar(inp);
-    fun->reflectGuard = (ReflectGuard)InChar(inp);
+    fun->reflectGuard = InChar(inp);
     UNPROTECT(protectCount);
     return fun;
 }
