@@ -289,7 +289,6 @@ AbstractResult ScopeAnalysis::doCompute(ScopeAnalysisState& state,
             if (!canIntrospect(closure->reflectGuard())) {
                 // Accessing local envs or leaked envs will break the reflect
                 // guard
-                effect.update();
                 handled = true;
             } else if (closure->assumptions().includes(
                            Assumption::NoReflectiveArgument)) {
