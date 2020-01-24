@@ -1001,6 +1001,8 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_,
         SEXP fun = CAR(inAst);
 
         if (TYPEOF(fun) == SYMSXP) {
+            if (!INTERNAL(fun))
+                return false;
             for (RListIter a = args.begin(); a != args.end(); ++a)
                 if (a.hasTag() || *a == R_DotsSymbol || *a == R_MissingArg)
                     return false;
@@ -1008,17 +1010,30 @@ bool compileSpecialCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args_,
             SEXP internal = fun->u.symsxp.internal;
             int i = ((sexprec_rjit*)internal)->u.i;
 
-            // If the .Internal call goes to a builtin, then we call eagerly
+            emitGuardForNamePrimitive(cs, symbol::Internal);
+
             if (R_FunTab[i].eval % 10 == 1) {
-                emitGuardForNamePrimitive(cs, symbol::Internal);
+                // If the .Internal call goes to a builtin, then we call eagerly
                 for (SEXP a : args)
                     compileExpr(ctx, a);
-                cs << BC::callBuiltin(args.length(), inAst, internal);
-                if (voidContext)
-                    cs << BC::pop();
-
-                return true;
+            } else {
+                // Otherwise (i believe) it is ok to pass it promises
+                for (SEXP a : args) {
+                    Code* prom = compilePromise(ctx, a);
+                    size_t idx = cs.addPromise(prom);
+                    SEXP known = safeEval(a, nullptr);
+                    if (known != R_UnboundValue) {
+                        cs << BC::push(known);
+                        cs << BC::mkEagerPromise(idx);
+                    } else {
+                        cs << BC::mkPromise(idx);
+                    }
+                }
             }
+            cs << BC::callBuiltin(args.length(), inAst, internal);
+            if (voidContext)
+                cs << BC::pop();
+            return true;
         }
     }
 

@@ -765,7 +765,7 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
             args[n - i - 1] = pop();
         }
 
-        assert(TYPEOF(target) == BUILTINSXP);
+        assert(TYPEOF(target) == BUILTINSXP || TYPEOF(target) == SPECIALSXP);
         push(insert(BuiltinCallFactory::New(env, target, args, ast)));
         break;
     }

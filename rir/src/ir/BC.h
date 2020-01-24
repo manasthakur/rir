@@ -349,7 +349,6 @@ BC BC::staticCall(size_t nargs, SEXP ast, SEXP targetClosure,
     return BC(Opcode::static_call_, im);
 }
 BC BC::callBuiltin(size_t nargs, SEXP ast, SEXP builtin) {
-    assert(TYPEOF(builtin) == BUILTINSXP);
     ImmediateArguments im;
     im.callBuiltinFixedArgs.nargs = nargs;
     im.callBuiltinFixedArgs.ast = Pool::insert(ast);

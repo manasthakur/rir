@@ -488,7 +488,8 @@ static RIR_INLINE SEXP legacySpecialCall(CallContext& call,
 
 static RIR_INLINE SEXP legacyCallWithArgslist(CallContext& call, SEXP argslist,
                                               InterpreterInstance* ctx) {
-    if (TYPEOF(call.callee) == BUILTINSXP) {
+    if (TYPEOF(call.callee) == BUILTINSXP ||
+        TYPEOF(call.callee) == SPECIALSXP) {
         // get the ccode
         CCODE f = getBuiltin(call.callee);
         int flag = getFlag(call.callee);
